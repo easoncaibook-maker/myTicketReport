@@ -1,32 +1,47 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Button, Card, Form, Input, Select, Space, Upload, message } from 'antd';
+import { Button, Card, Form, Input, Radio, Select, Space, Upload, message } from 'antd';
 import { ArrowLeftOutlined, InboxOutlined } from '@ant-design/icons';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { PRIORITIES, PRIORITY_LABELS } from '@ticketreport/shared';
 import { api, errorMessage } from '../lib/api';
+import { useAuth } from '../lib/auth';
 
 export default function TicketCreatePage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { user } = useAuth();
   const [form] = Form.useForm();
   const [files, setFiles] = useState<any[]>([]);
   const [submitting, setSubmitting] = useState(false);
+  const ticketType = Form.useWatch('ticketType', form);
+  const isOps = user?.role === 'AGENT' || user?.role === 'OPS_LEAD' || user?.role === 'ADMIN';
 
   const { data: categories } = useQuery({
     queryKey: ['meta-categories'],
     queryFn: () => api.get('/meta/categories'),
   });
 
+  const { data: enterprises } = useQuery({
+    queryKey: ['meta-enterprises'],
+    queryFn: () => api.get('/meta/enterprises'),
+    enabled: isOps,
+  });
+
   const onFinish = async (values: any) => {
     setSubmitting(true);
     try {
-      const ticket = await api.post('/tickets', {
+      const payload: any = {
         title: values.title.trim(),
         description: values.description,
         categoryId: values.categoryId,
         priority: values.priority,
-      });
+      };
+      if (isOps) {
+        payload.ticketType = values.ticketType;
+        if (values.ticketType === 'CUSTOMER') payload.enterpriseId = values.enterpriseId;
+      }
+      const ticket = await api.post('/tickets', payload);
       let failed = 0;
       for (const f of files) {
         try {
@@ -59,9 +74,36 @@ export default function TicketCreatePage() {
           form={form}
           layout="vertical"
           onFinish={onFinish}
-          initialValues={{ priority: 'P3' }}
+          initialValues={{ priority: 'P3', ticketType: isOps ? 'CUSTOMER' : undefined }}
           requiredMark="optional"
         >
+          {isOps && (
+            <Form.Item name="ticketType" label="工单归属" rules={[{ required: true }]}>
+              <Radio.Group optionType="button" buttonStyle="solid">
+                <Radio.Button value="CUSTOMER">代客户提单</Radio.Button>
+                <Radio.Button value="INTERNAL">内部工单</Radio.Button>
+              </Radio.Group>
+            </Form.Item>
+          )}
+          {isOps && ticketType === 'CUSTOMER' && (
+            <Form.Item
+              name="enterpriseId"
+              label="客户企业"
+              rules={[{ required: true, message: '请选择客户企业' }]}
+            >
+              <Select
+                showSearch
+                placeholder="请选择代提报的客户企业"
+                optionFilterProp="label"
+                options={(enterprises ?? []).map((e: any) => ({ value: e.id, label: e.name }))}
+              />
+            </Form.Item>
+          )}
+          {isOps && ticketType === 'INTERNAL' && (
+            <div style={{ marginBottom: 16, color: '#8c8c8c', fontSize: 13 }}>
+              内部工单不关联客户企业，仅运维团队可见，不进入客户满意度统计。
+            </div>
+          )}
           <Form.Item
             name="title"
             label="标题"

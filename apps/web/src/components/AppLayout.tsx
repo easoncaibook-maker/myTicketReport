@@ -35,9 +35,7 @@ export default function AppLayout() {
     const items: any[] = [
       { key: '/tickets', icon: <FileTextOutlined />, label: '工单列表' },
     ];
-    if (user?.role === 'REPORTER') {
-      items.push({ key: '/tickets/new', icon: <PlusOutlined />, label: '提交工单' });
-    }
+    items.push({ key: '/tickets/new', icon: <PlusOutlined />, label: '提交工单' });
     items.push({ key: '/notifications', icon: <BellOutlined />, label: '消息中心' });
     items.push({ key: '/reports', icon: <BarChartOutlined />, label: '统计报表' });
     if (user?.role === 'ADMIN') {

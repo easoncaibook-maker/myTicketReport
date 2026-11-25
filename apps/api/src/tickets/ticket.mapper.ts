@@ -1,19 +1,34 @@
-import { ROLE_LABELS, Role, STATUS_LABELS, PRIORITY_LABELS, TicketStatus, Priority } from '@ticketreport/shared';
+import {
+  ROLE_LABELS,
+  Role,
+  STATUS_LABELS,
+  PRIORITY_LABELS,
+  TICKET_TYPE_LABELS,
+  TicketStatus,
+  TicketType,
+  Priority,
+} from '@ticketreport/shared';
 
 export function ticketSummary(ticket: any) {
+  const ticketType = (ticket.ticketType ?? 'CUSTOMER') as TicketType;
   return {
     id: ticket.id,
     ticketNo: ticket.ticketNo,
     title: ticket.title,
     description: ticket.description,
+    ticketType,
+    ticketTypeLabel: TICKET_TYPE_LABELS[ticketType] ?? ticket.ticketType,
+    isInternal: ticketType === 'INTERNAL',
+    onBehalf: !!ticket.onBehalf,
     status: ticket.status,
     statusLabel: STATUS_LABELS[ticket.status as TicketStatus] ?? ticket.status,
     priority: ticket.priority,
     priorityLabel: PRIORITY_LABELS[ticket.priority as Priority] ?? ticket.priority,
-    enterpriseId: ticket.enterpriseId,
-    enterpriseName: ticket.enterprise?.name,
+    enterpriseId: ticket.enterpriseId ?? null,
+    enterpriseName: ticket.enterprise?.name ?? null,
     reporterId: ticket.reporterId,
     reporterName: ticket.reporter?.name,
+    reporterRole: ticket.reporter?.role,
     assigneeId: ticket.assigneeId,
     assigneeName: ticket.assignee?.name ?? null,
     groupId: ticket.groupId,

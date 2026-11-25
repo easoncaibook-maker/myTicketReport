@@ -74,6 +74,23 @@ export default function UsersPage() {
     });
   };
 
+  const changeRole = (row: any, nextRole: string) => {
+    if (nextRole === row.role) return;
+    Modal.confirm({
+      title: '调整角色',
+      content: `确定将 ${row.name}（${row.email}）从「${ROLE_LABELS[row.role as Role]}」调整为「${ROLE_LABELS[nextRole as Role]}」吗？调整后立即生效。`,
+      onOk: async () => {
+        try {
+          await api.patch(`/admin/users/${row.id}`, { role: nextRole });
+          message.success('角色已更新');
+          refresh();
+        } catch (e) {
+          message.error(errorMessage(e));
+        }
+      },
+    });
+  };
+
   const resend = async (row: any) => {
     try {
       await api.post(`/admin/users/${row.id}/resend-invite`);
@@ -136,7 +153,33 @@ export default function UsersPage() {
           columns={[
             { title: '姓名', dataIndex: 'name', width: 120 },
             { title: '邮箱', dataIndex: 'email' },
-            { title: '角色', dataIndex: 'role', width: 110, render: (v: Role) => <RoleTag role={v} /> },
+            {
+              title: '角色',
+              dataIndex: 'role',
+              width: 150,
+              render: (v: Role, r: any) => {
+                const isOpsAccount = v !== 'REPORTER' && !r.enterpriseId;
+                if (!isOpsAccount) {
+                  return (
+                    <Space size={4}>
+                      <RoleTag role={v} />
+                    </Space>
+                  );
+                }
+                return (
+                  <Select
+                    size="small"
+                    value={v}
+                    style={{ width: 120 }}
+                    onChange={(next) => changeRole(r, next)}
+                    options={(['AGENT', 'OPS_LEAD', 'ADMIN'] as Role[]).map((x) => ({
+                      value: x,
+                      label: ROLE_LABELS[x],
+                    }))}
+                  />
+                );
+              },
+            },
             {
               title: '所属企业 / 处理组',
               width: 190,

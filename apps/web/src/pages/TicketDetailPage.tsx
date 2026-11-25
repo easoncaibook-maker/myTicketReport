@@ -85,8 +85,16 @@ export default function TicketDetailPage() {
 
   const actions = useMemo(() => {
     if (!ticket || !user) return [];
-    return availableActions(ticket.status, user.role as Role).filter((def) => {
-      if (['CONFIRM', 'REJECT', 'REOPEN', 'CANCEL'].includes(def.action)) return ticket.reporterId === user.id;
+    const isReporter = ticket.isInternal
+      ? ticket.reporterId === user.id
+      : ticket.reporterId === user.id ||
+        (!!ticket.onBehalf && user.role === 'REPORTER' && user.enterpriseId === ticket.enterpriseId);
+    return availableActions(ticket.status, user.role as Role, {
+      isReporter,
+      isInternal: !!ticket.isInternal,
+    }).filter((def) => {
+      if (['CONFIRM', 'REJECT', 'REOPEN'].includes(def.action)) return isReporter;
+      if (def.action === 'CANCEL') return ticket.reporterId === user.id;
       if (def.action === 'CLAIM') return user.role === 'AGENT' && user.groupIds?.includes(ticket.groupId);
       if (def.action === 'RESOLVE' || def.action === 'TRANSFER') {
         return user.role !== 'AGENT' || ticket.assigneeId === user.id;
@@ -229,6 +237,8 @@ export default function TicketDetailPage() {
               </span>
               <StatusTag status={ticket.status} />
               <PriorityTag priority={ticket.priority} />
+              {ticket.isInternal && <Tag color="geekblue">内部工单</Tag>}
+              {ticket.onBehalf && <Tag color="gold">代客户提单</Tag>}
               {ticket.groupName && <Tag color="blue">{ticket.groupName}</Tag>}
               {ticket.categoryName && <Tag>{ticket.categoryName}</Tag>}
             </Space>
@@ -245,7 +255,7 @@ export default function TicketDetailPage() {
                 {def.label}
               </Button>
             ))}
-            {user?.role === 'REPORTER' && ticket.reporterId === user.id && ticket.status === 'PENDING' && (
+            {ticket.reporterId === user?.id && ticket.status === 'PENDING' && (
               <Button
                 onClick={() => {
                   editForm.setFieldsValue({
@@ -276,13 +286,14 @@ export default function TicketDetailPage() {
         )}
 
         <Descriptions column={{ xs: 1, sm: 2, md: 3 }} size="small" style={{ marginTop: 16 }}>
-          <Descriptions.Item label="提报人">
+          <Descriptions.Item label={ticket.onBehalf ? '代提人' : '提报人'}>
             {ticket.reporterName}
             {ticket.reporterEmail ? `（${ticket.reporterEmail}）` : ''}
+            {ticket.onBehalf && <Tag color="gold" style={{ marginLeft: 8 }}>代客户提单</Tag>}
           </Descriptions.Item>
           <Descriptions.Item label="处理人">{ticket.assigneeName || '未分配'}</Descriptions.Item>
           <Descriptions.Item label="处理组">{ticket.groupName || '-'}</Descriptions.Item>
-          <Descriptions.Item label="企业">{ticket.enterpriseName || '-'}</Descriptions.Item>
+          <Descriptions.Item label="企业">{ticket.isInternal ? '内部工单' : ticket.enterpriseName || '-'}</Descriptions.Item>
           <Descriptions.Item label="创建时间">{formatDate(ticket.createdAt)}</Descriptions.Item>
           <Descriptions.Item label="更新时间">{formatDate(ticket.lastActivityAt)}</Descriptions.Item>
           {ticket.closedAt && <Descriptions.Item label="关闭时间">{formatDate(ticket.closedAt)}</Descriptions.Item>}

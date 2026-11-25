@@ -13,9 +13,18 @@ const createTicketSchema = z.object({
   description: z.string().min(10, '描述至少 10 个字').max(5000, '描述最多 5000 个字'),
   categoryId: z.string().min(1, '请选择分类'),
   priority: z.enum(PRIORITIES),
+  /** 仅运维侧账号生效：INTERNAL=内部工单，CUSTOMER/缺省=代客户提单 */
+  ticketType: z.enum(['CUSTOMER', 'INTERNAL']).optional(),
+  /** 代客户提单时必填 */
+  enterpriseId: z.string().min(1).optional().nullable(),
 });
 
-const updateTicketSchema = createTicketSchema.partial();
+const updateTicketSchema = z.object({
+  title: z.string().min(5, '标题至少 5 个字').max(100, '标题最多 100 个字').optional(),
+  description: z.string().min(10, '描述至少 10 个字').max(5000, '描述最多 5000 个字').optional(),
+  categoryId: z.string().min(1, '请选择分类').optional(),
+  priority: z.enum(PRIORITIES).optional(),
+});
 const assignSchema = z.object({
   groupId: z.string().min(1, '请选择处理组'),
   assigneeId: z.string().optional().nullable(),

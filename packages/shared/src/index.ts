@@ -34,8 +34,18 @@ export const STATUS_COLORS: Record<TicketStatus, string> = {
   CANCELLED: 'default',
 };
 
-export const PRIORITIES = ['P1', 'P2', 'P3', 'P4'] as const;
-export type Priority = (typeof PRIORITIES)[number];
+export const TICKET_TYPES = ['CUSTOMER', 'INTERNAL'] as const;
+export type TicketType = (typeof TICKET_TYPES)[number];
+
+export const TICKET_TYPE_LABELS: Record<TicketType, string> = {
+  CUSTOMER: '客户工单',
+  INTERNAL: '内部工单',
+};
+
+/** 内部工单类型值（不挂客户企业，仅运维团队可见） */
+export const INTERNAL_TICKET = 'INTERNAL' as const;
+
+export const PRIORITIES = ['P1', 'P2', 'P3', 'P4'] as const;export type Priority = (typeof PRIORITIES)[number];
 
 export const PRIORITY_LABELS: Record<Priority, string> = {
   P1: '紧急',
@@ -158,8 +168,27 @@ export const TRANSITIONS: TransitionDef[] = [
   },
 ];
 
-export function availableActions(status: TicketStatus, role: Role): TransitionDef[] {
-  return TRANSITIONS.filter((t) => t.from.includes(status) && t.roles.includes(role));
+/** 需要「提报人本人」执行的动作（客户工单由客户提报人执行，内部工单由运维提报人执行） */
+const REPORTER_ACTIONS: TicketAction[] = ['CONFIRM', 'REJECT', 'REOPEN', 'CANCEL'];
+
+export interface ActionContext {
+  /** 当前用户是否为该工单提报人 */
+  isReporter?: boolean;
+  /** 是否为内部工单（无客户企业） */
+  isInternal?: boolean;
+}
+
+export function availableActions(status: TicketStatus, role: Role, ctx: ActionContext = {}): TransitionDef[] {
+  return TRANSITIONS.filter((t) => {
+    if (!t.from.includes(status)) return false;
+    if (REPORTER_ACTIONS.includes(t.action)) {
+      // 内部工单没有客户在场，确认/驳回/重开/撤回由提报人本人完成，与角色无关
+      if (ctx.isInternal) return !!ctx.isReporter;
+      if (ctx.isReporter === false) return false;
+      return t.roles.includes(role);
+    }
+    return t.roles.includes(role);
+  });
 }
 
 export function findTransition(action: string): TransitionDef | undefined {

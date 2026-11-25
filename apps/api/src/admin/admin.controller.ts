@@ -29,6 +29,8 @@ const userUpdateSchema = z.object({
   name: z.string().min(1).max(50).optional(),
   phone: z.string().max(30).optional(),
   status: z.enum(['INVITED', 'ACTIVE', 'DISABLED']).optional(),
+  /** 仅运维侧账号可在 AGENT / OPS_LEAD / ADMIN 之间切换 */
+  role: z.enum(['AGENT', 'OPS_LEAD', 'ADMIN']).optional(),
 });
 
 const categorySchema = z.object({
@@ -205,7 +207,8 @@ export class MetaController {
     return this.service.listAgents(groupId);
   }
 
-  @Roles('OPS_LEAD', 'ADMIN')
+  /** 处理人代客提单时也需要选择客户企业 */
+  @Roles('AGENT', 'OPS_LEAD', 'ADMIN')
   @Get('enterprises')
   enterprises() {
     return this.service.listEnterprisesForFilter();

@@ -123,7 +123,12 @@ model Category {
 model Ticket {
   id             String    @id @default(cuid())
   ticketNo       String    @unique
-  enterpriseId   String
+  /** CUSTOMER=客户工单（含代客提单），INTERNAL=内部工单（不挂企业） */
+  ticketType     String    @default("CUSTOMER")
+  /** 内部工单为空 */
+  enterpriseId   String?
+  /** 运维账号代客户提单时为 true */
+  onBehalf       Boolean   @default(false)
   reporterId     String
   title          String
   description    String
@@ -148,7 +153,7 @@ model Ticket {
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
-  enterprise Enterprise  @relation(fields: [enterpriseId], references: [id])
+  enterprise Enterprise? @relation(fields: [enterpriseId], references: [id])
   reporter   User        @relation("Reporter", fields: [reporterId], references: [id])
   assignee   User?       @relation("Assignee", fields: [assigneeId], references: [id])
   category   Category    @relation(fields: [categoryId], references: [id])

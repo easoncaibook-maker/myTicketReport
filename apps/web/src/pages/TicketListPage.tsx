@@ -89,7 +89,10 @@ export default function TicketListPage() {
       render: (_: any, r: any) => (
         <div>
           <div>{r.reporterName}</div>
-          <div style={{ fontSize: 12, color: '#8c8c8c' }}>{r.enterpriseName}</div>
+          <div style={{ fontSize: 12, color: '#8c8c8c' }}>
+            {r.isInternal ? '内部工单' : r.enterpriseName}
+            {r.onBehalf ? ' · 代提' : ''}
+          </div>
         </div>
       ),
     },
@@ -141,12 +144,9 @@ export default function TicketListPage() {
           <Button icon={<ReloadOutlined />} onClick={() => refetch()}>
             刷新
           </Button>
-          {user?.role === 'REPORTER' && (
-            <Button type="primary" icon={<PlusOutlined />} onClick={() => navigate('/tickets/new')}>
-              提交工单
-            </Button>
-          )}
-        </Space>
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => navigate('/tickets/new')}>
+            提交工单
+          </Button>        </Space>
       </div>
 
       <Card size="small" style={{ marginBottom: 16 }}>
