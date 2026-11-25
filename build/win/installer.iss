@@ -1,5 +1,5 @@
 ﻿#define MyAppName "运维工单系统"
-#define MyAppVersion "0.1.0"
+#define MyAppVersion "0.2.0"
 #define MyAppPublisher "TicketReport"
 
 [Setup]
@@ -31,6 +31,9 @@ Source: "app\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createall
 
 [Icons]
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{sys}\wscript.exe"; Parameters: """{app}\launcher.vbs"""; WorkingDir: "{app}"; IconFilename: "{app}\app.ico"
+Name: "{autoprograms}\{#MyAppName} 操作手册"; Filename: "{sys}\notepad.exe"; Parameters: """{app}\操作手册.md"""; WorkingDir: "{app}"
+Name: "{autoprograms}\{#MyAppName} 停止服务"; Filename: "{app}\stop.cmd"; WorkingDir: "{app}"; IconFilename: "{app}\app.ico"
+Name: "{autoprograms}\{#MyAppName} 切换空库"; Filename: "{app}\switch-to-base.cmd"; WorkingDir: "{app}"; IconFilename: "{app}\app.ico"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{sys}\wscript.exe"; Parameters: """{app}\launcher.vbs"""; WorkingDir: "{app}"; IconFilename: "{app}\app.ico"; Tasks: desktopicon
 
 [Run]
