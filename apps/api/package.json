@@ -1,0 +1,46 @@
+{
+  "name": "@ticketreport/api",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "ts-node src/main.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/main.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "db:generate": "prisma generate --schema prisma/schema.sqlite.prisma",
+    "db:push": "prisma db push --schema prisma/schema.sqlite.prisma --skip-generate",
+    "db:generate:pg": "prisma generate --schema prisma/schema.postgresql.prisma",
+    "db:push:pg": "prisma db push --schema prisma/schema.postgresql.prisma --skip-generate",
+    "seed": "ts-node prisma/seed.ts",
+    "seed:base": "ts-node prisma/seed.ts --base",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@nestjs/common": "^10.4.15",
+    "@nestjs/config": "^3.3.0",
+    "@nestjs/core": "^10.4.15",
+    "@nestjs/jwt": "^10.2.0",
+    "@nestjs/platform-express": "^10.4.15",
+    "@prisma/client": "^6.2.1",
+    "@ticketreport/shared": "*",
+    "cookie-parser": "^1.4.7",
+    "dotenv": "^16.4.7",
+    "nodemailer": "^6.9.16",
+    "prisma": "^6.2.1",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.1",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/cookie-parser": "^1.4.8",
+    "@types/express": "^5.0.0",
+    "@types/multer": "^1.4.12",
+    "@types/node": "^22.10.2",
+    "@types/nodemailer": "^6.4.17",
+    "@types/supertest": "^6.0.2",
+    "supertest": "^7.0.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

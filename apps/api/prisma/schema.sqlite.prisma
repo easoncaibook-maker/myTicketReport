@@ -1,0 +1,265 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Enterprise {
+  id           String   @id @default(cuid())
+  name         String
+  code         String   @unique
+  contactName  String?
+  contactPhone String?
+  status       String   @default("ACTIVE")
+  remark       String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  users   User[]
+  tickets Ticket[]
+
+  @@index([status])
+}
+
+model User {
+  id             String    @id @default(cuid())
+  enterpriseId   String?
+  email          String    @unique
+  passwordHash   String?
+  name           String
+  phone          String?
+  role           String
+  status         String    @default("INVITED")
+  invitedAt      DateTime?
+  activatedAt    DateTime?
+  lastLoginAt    DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  enterprise      Enterprise?      @relation(fields: [enterpriseId], references: [id])
+  reportedTickets Ticket[]         @relation("Reporter")
+  assignedTickets Ticket[]         @relation("Assignee")
+  groupMembers    GroupMember[]
+  tokens          AuthToken[]
+  refreshTokens   RefreshToken[]
+
+  @@index([enterpriseId, role])
+  @@index([status])
+}
+
+model AuthToken {
+  id        String    @id @default(cuid())
+  userId    String
+  type      String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId, type])
+}
+
+model RefreshToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  userAgent String?
+  ip        String?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+}
+
+model OpsGroup {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  status      String   @default("ACTIVE")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  members    GroupMember[]
+  tickets    Ticket[]
+  categories Category[]
+}
+
+model GroupMember {
+  id      String  @id @default(cuid())
+  groupId String
+  userId  String
+  isLead  Boolean @default(false)
+
+  group OpsGroup @relation(fields: [groupId], references: [id])
+  user  User     @relation(fields: [userId], references: [id])
+
+  @@unique([groupId, userId])
+  @@index([userId])
+}
+
+model Category {
+  id             String   @id @default(cuid())
+  name           String   @unique
+  defaultGroupId String
+  sort           Int      @default(0)
+  status         String   @default("ACTIVE")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  defaultGroup OpsGroup @relation(fields: [defaultGroupId], references: [id])
+  tickets      Ticket[]
+
+  @@index([status])
+}
+
+model Ticket {
+  id             String    @id @default(cuid())
+  ticketNo       String    @unique
+  enterpriseId   String
+  reporterId     String
+  title          String
+  description    String
+  categoryId     String
+  priority       String    @default("P3")
+  status         String    @default("PENDING")
+  groupId        String
+  assigneeId     String?
+  resolution     String?
+  resolvedAt     DateTime?
+  confirmedAt    DateTime?
+  closedAt       DateTime?
+  closedById     String?
+  closeReason    String?
+  cancelledAt    DateTime?
+  cancelReason   String?
+  reopenCount    Int       @default(0)
+  version        Int       @default(0)
+  lastActivityAt DateTime  @default(now())
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  enterprise Enterprise  @relation(fields: [enterpriseId], references: [id])
+  reporter   User        @relation("Reporter", fields: [reporterId], references: [id])
+  assignee   User?       @relation("Assignee", fields: [assigneeId], references: [id])
+  category   Category    @relation(fields: [categoryId], references: [id])
+  group      OpsGroup    @relation(fields: [groupId], references: [id])
+  comments   TicketComment[]
+  attachments TicketAttachment[]
+  events     TicketEvent[]
+
+  @@index([enterpriseId, status, lastActivityAt])
+  @@index([groupId, status])
+  @@index([assigneeId, status])
+  @@index([ticketNo])
+}
+
+model TicketComment {
+  id         String    @id @default(cuid())
+  ticketId   String
+  authorId   String
+  authorName String
+  authorRole String
+  visibility String    @default("PUBLIC")
+  content    String
+  deletedAt  DateTime?
+  createdAt  DateTime  @default(now())
+
+  ticket      Ticket             @relation(fields: [ticketId], references: [id])
+  attachments TicketAttachment[]
+
+  @@index([ticketId, createdAt])
+}
+
+model TicketAttachment {
+  id           String   @id @default(cuid())
+  ticketId     String
+  commentId    String?
+  uploaderId   String
+  originalName String
+  storedPath   String
+  mimeType     String
+  size         Int
+  createdAt    DateTime @default(now())
+
+  ticket  Ticket         @relation(fields: [ticketId], references: [id])
+  comment TicketComment? @relation(fields: [commentId], references: [id])
+
+  @@index([ticketId])
+  @@index([commentId])
+}
+
+model TicketEvent {
+  id         String   @id @default(cuid())
+  ticketId   String
+  actorId    String?
+  actorName  String
+  action     String
+  fromValue  String?
+  toValue    String?
+  reason     String?
+  visibility String   @default("PUBLIC")
+  meta       String?
+  createdAt  DateTime @default(now())
+
+  ticket Ticket @relation(fields: [ticketId], references: [id])
+
+  @@index([ticketId, createdAt])
+}
+
+model Notification {
+  id        String    @id @default(cuid())
+  userId    String
+  type      String
+  title     String
+  body      String
+  ticketId  String?
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId, readAt])
+}
+
+model EmailOutbox {
+  id            String    @id @default(cuid())
+  ticketId      String?
+  toEmail       String
+  subject       String
+  bodyHtml      String
+  bodyText      String
+  template      String
+  status        String    @default("PENDING")
+  attempts      Int       @default(0)
+  lastError     String?
+  nextAttemptAt DateTime?
+  sentAt        DateTime?
+  createdAt     DateTime  @default(now())
+
+  @@index([status, nextAttemptAt])
+}
+
+model AppSetting {
+  key       String   @id
+  value     String
+  updatedBy String?
+  updatedAt DateTime @updatedAt
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  actorId    String
+  action     String
+  targetType String
+  targetId   String
+  detail     String?
+  createdAt  DateTime @default(now())
+
+  @@index([createdAt])
+}

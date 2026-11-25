@@ -1,0 +1,146 @@
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Res, UploadedFile, UseInterceptors } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { memoryStorage } from 'multer';
+import type { Response } from 'express';
+import { PRIORITIES, VISIBILITIES } from '@ticketreport/shared';
+import { z } from 'zod';
+import { AuthUser, CurrentUser } from '../common/decorators';
+import { ZodPipe } from '../common/zod.pipe';
+import { TicketsService } from './tickets.service';
+
+const createTicketSchema = z.object({
+  title: z.string().min(5, '标题至少 5 个字').max(100, '标题最多 100 个字'),
+  description: z.string().min(10, '描述至少 10 个字').max(5000, '描述最多 5000 个字'),
+  categoryId: z.string().min(1, '请选择分类'),
+  priority: z.enum(PRIORITIES),
+});
+
+const updateTicketSchema = createTicketSchema.partial();
+const assignSchema = z.object({
+  groupId: z.string().min(1, '请选择处理组'),
+  assigneeId: z.string().optional().nullable(),
+  reason: z.string().max(500).optional(),
+});
+const transferSchema = z.object({
+  groupId: z.string().min(1, '请选择处理组'),
+  assigneeId: z.string().optional().nullable(),
+  reason: z.string().min(2, '请填写转派原因').max(500),
+});
+const reasonSchema = z.object({ reason: z.string().min(2, '请填写原因').max(500) });
+const optionalReasonSchema = z.object({ reason: z.string().max(500).optional() });
+const resolveSchema = z.object({ resolution: z.string().min(5, '请填写处理结果').max(2000) });
+const commentSchema = z.object({
+  content: z.string().min(1, '请输入内容').max(5000, '内容不超过 5000 字'),
+  visibility: z.enum(VISIBILITIES).optional(),
+  attachmentIds: z.array(z.string()).optional(),
+});
+
+@Controller('tickets')
+export class TicketsController {
+  constructor(private readonly service: TicketsService) {}
+
+  @Get()
+  list(@CurrentUser() user: AuthUser, @Query() query: any) {
+    return this.service.list(user, query);
+  }
+
+  @Post()
+  create(@CurrentUser() user: AuthUser, @Body(new ZodPipe(createTicketSchema)) body: any) {
+    return this.service.create(user, body);
+  }
+
+  @Get(':id')
+  get(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.service.get(user, id);
+  }
+
+  @Patch(':id')
+  update(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body(new ZodPipe(updateTicketSchema)) body: any) {
+    return this.service.update(user, id, body);
+  }
+
+  @Post(':id/claim')
+  claim(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.service.claim(user, id);
+  }
+
+  @Post(':id/assign')
+  assign(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body(new ZodPipe(assignSchema)) body: any) {
+    return this.service.assign(user, id, body);
+  }
+
+  @Post(':id/transfer')
+  transfer(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body(new ZodPipe(transferSchema)) body: any) {
+    return this.service.transfer(user, id, body);
+  }
+
+  @Post(':id/release')
+  release(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.service.release(user, id);
+  }
+
+  @Post(':id/resolve')
+  resolve(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body(new ZodPipe(resolveSchema)) body: any) {
+    return this.service.resolve(user, id, body);
+  }
+
+  @Post(':id/confirm')
+  confirm(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.service.confirm(user, id);
+  }
+
+  @Post(':id/reject')
+  reject(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body(new ZodPipe(reasonSchema)) body: any) {
+    return this.service.reject(user, id, body);
+  }
+
+  @Post(':id/force-close')
+  forceClose(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body(new ZodPipe(reasonSchema)) body: any) {
+    return this.service.forceClose(user, id, body);
+  }
+
+  @Post(':id/reopen')
+  reopen(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.service.reopen(user, id);
+  }
+
+  @Post(':id/cancel')
+  cancel(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body(new ZodPipe(optionalReasonSchema)) body: any) {
+    return this.service.cancel(user, id, body);
+  }
+
+  @Post(':id/comments')
+  comment(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body(new ZodPipe(commentSchema)) body: any) {
+    return this.service.createComment(user, id, body);
+  }
+
+  @Post(':id/attachments')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: memoryStorage(),
+      limits: { fileSize: 200 * 1024 * 1024, files: 1 },
+    }),
+  )
+  upload(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    return this.service.uploadAttachment(user, id, file);
+  }
+}
+
+@Controller()
+export class AttachmentsController {
+  constructor(private readonly service: TicketsService) {}
+
+  @Get('attachments/:id/download')
+  download(@CurrentUser() user: AuthUser, @Param('id') id: string, @Res() res: Response) {
+    return this.service.downloadAttachment(user, id, res);
+  }
+
+  @Delete('comments/:id')
+  deleteComment(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.service.deleteComment(user, id);
+  }
+}
