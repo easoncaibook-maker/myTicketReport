@@ -20,6 +20,7 @@ import {
 import type { Response } from 'express';
 import { AuditService } from '../audit/audit.module';
 import { AuthUser } from '../common/decorators';
+import { normalizeRichText } from '../common/rich-text';
 import { ticketScope } from '../common/scope';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -191,6 +192,22 @@ export class TicketsService {
     };
   }
 
+  /** 清洗富文本描述并校验纯文本长度（10~5000 字） */
+  private cleanDescription(input: string) {
+    const rich = normalizeRichText(input);
+    if (rich.text.length < 10) throw new BadRequestException('描述至少 10 个字');
+    if (rich.text.length > 5000) throw new BadRequestException('描述最多 5000 个字');
+    return rich;
+  }
+
+  /** 清洗富文本评论并校验纯文本长度（1~5000 字） */
+  private cleanComment(input: string) {
+    const rich = normalizeRichText(input);
+    if (rich.text.length < 1) throw new BadRequestException('请输入内容');
+    if (rich.text.length > 5000) throw new BadRequestException('内容不超过 5000 字');
+    return rich;
+  }
+
   async create(user: AuthUser, body: any) {
     const isOpsUser = ['AGENT', 'OPS_LEAD', 'ADMIN'].includes(user.role);
     let ticketType: 'CUSTOMER' | 'INTERNAL' = 'CUSTOMER';
@@ -220,6 +237,7 @@ export class TicketsService {
     if (!category) throw new BadRequestException('分类不存在或已停用');
     if (category.defaultGroup.status !== 'ACTIVE') throw new BadRequestException('该分类的默认处理组已停用');
     const ticketNo = await this.nextTicketNo();
+    const description = this.cleanDescription(body.description);
     const ticket = await this.prisma.$transaction(async (tx) => {
       const created = await tx.ticket.create({
         data: {
@@ -229,7 +247,7 @@ export class TicketsService {
           onBehalf,
           reporterId: user.id,
           title: body.title,
-          description: body.description,
+          description: description.html,
           categoryId: category.id,
           priority: body.priority,
           groupId: category.defaultGroupId,
@@ -295,6 +313,9 @@ export class TicketsService {
     const data: any = {};
     for (const key of ['title', 'description', 'priority']) {
       if (body[key] !== undefined) data[key] = body[key];
+    }
+    if (data.description !== undefined) {
+      data.description = this.cleanDescription(data.description).html;
     }
     let groupId = ticket.groupId;
     if (body.categoryId && body.categoryId !== ticket.categoryId) {
@@ -882,6 +903,7 @@ export class TicketsService {
       throw new ForbiddenException('客户不能添加内部备注');
     }
     const attachmentIds: string[] = body.attachmentIds ?? [];
+    const content = this.cleanComment(body.content);
     if (attachmentIds.length > 0) {
       const owned = await this.prisma.ticketAttachment.count({
         where: { id: { in: attachmentIds }, ticketId: id, commentId: null },
@@ -896,7 +918,7 @@ export class TicketsService {
           authorName: user.name,
           authorRole: user.role,
           visibility,
-          content: body.content,
+          content: content.html,
         },
       });
       if (attachmentIds.length > 0) {
@@ -943,7 +965,7 @@ export class TicketsService {
       await this.notifications.notify({
         type: 'TICKET_COMMENT',
         title: `工单有新回复 ${ticket.ticketNo}`,
-        body: `${user.name}：${body.content.slice(0, 100)}`,
+        body: `${user.name}：${content.text.slice(0, 100)}`,
         ticketId: id,
         recipients,
         email: {
@@ -952,7 +974,7 @@ export class TicketsService {
             ticketNo: ticket.ticketNo,
             title: ticket.title,
             actorName: user.name,
-            content: body.content,
+            content: content.text,
             link: this.link(id),
           },
         },
@@ -970,7 +992,7 @@ export class TicketsService {
             ticketNo: ticket.ticketNo,
             title: ticket.title,
             actorName: user.name,
-            content: body.content,
+            content: content.text,
             link: this.link(id),
           },
         },

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button, Card, Form, Input, Radio, Select, Space, Upload, message } from 'antd';
 import { ArrowLeftOutlined, InboxOutlined } from '@ant-design/icons';
@@ -6,6 +6,8 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { PRIORITIES, PRIORITY_LABELS } from '@ticketreport/shared';
 import { api, errorMessage } from '../lib/api';
 import { useAuth } from '../lib/auth';
+import RichTextEditor from '../components/RichTextEditor';
+import { richTextToPlainText } from '../lib/rich-text';
 
 export default function TicketCreatePage() {
   const navigate = useNavigate();
@@ -14,6 +16,8 @@ export default function TicketCreatePage() {
   const [form] = Form.useForm();
   const [files, setFiles] = useState<any[]>([]);
   const [submitting, setSubmitting] = useState(false);
+  /** 描述中粘贴的图片：建立工单后按占位序号上传 */
+  const pendingImages = useRef<File[]>([]);
   const ticketType = Form.useWatch('ticketType', form);
   const isOps = user?.role === 'AGENT' || user?.role === 'OPS_LEAD' || user?.role === 'ADMIN';
 
@@ -49,6 +53,32 @@ export default function TicketCreatePage() {
         } catch {
           failed += 1;
         }
+      }
+      // 描述中粘贴的图片：工单创建后上传为附件，再把占位替换成附件地址
+      const uploadedImages = new Map<number, { id: string; downloadUrl: string }>();
+      for (let i = 0; i < pendingImages.current.length; i += 1) {
+        try {
+          const uploaded = await api.upload(`/tickets/${ticket.id}/attachments`, pendingImages.current[i]);
+          uploadedImages.set(i, { id: uploaded.id, downloadUrl: uploaded.downloadUrl });
+        } catch {
+          failed += 1;
+        }
+      }
+      if (uploadedImages.size > 0) {
+        const holder = document.createElement('div');
+        holder.innerHTML = payload.description;
+        holder.querySelectorAll('img[data-pending-image]').forEach((img) => {
+          const index = Number(img.getAttribute('data-pending-image'));
+          const uploaded = uploadedImages.get(index);
+          if (uploaded) {
+            img.setAttribute('src', uploaded.downloadUrl);
+            img.setAttribute('data-attachment-id', uploaded.id);
+          } else {
+            img.remove();
+          }
+          img.removeAttribute('data-pending-image');
+        });
+        await api.patch(`/tickets/${ticket.id}`, { description: holder.innerHTML });
       }
       if (failed > 0) message.warning(`工单已提交，但有 ${failed} 个附件上传失败`);
       else message.success(`工单已提交：${ticket.ticketNo}`);
@@ -134,15 +164,21 @@ export default function TicketCreatePage() {
             name="description"
             label="问题描述"
             rules={[
-              { required: true, message: '请输入问题描述' },
-              { min: 10, max: 5000, message: '描述需 10–5000 字' },
+              {
+                validator: (_, value) => {
+                  const length = richTextToPlainText(value).length;
+                  if (length === 0) return Promise.reject(new Error('请输入问题描述'));
+                  if (length < 10) return Promise.reject(new Error('描述至少 10 个字'));
+                  if (length > 5000) return Promise.reject(new Error('描述最多 5000 个字'));
+                  return Promise.resolve();
+                },
+              },
             ]}
           >
-            <Input.TextArea
-              rows={7}
-              maxLength={5000}
-              showCount
+            <RichTextEditor
+              uploadImage={async (file) => ({ pendingIndex: pendingImages.current.push(file) - 1 })}
               placeholder="请描述现象、发生时间、影响范围、已尝试的操作等，便于快速定位问题。"
+              minHeight={160}
             />
           </Form.Item>
           <Form.Item label="附件（可选，最多 5 个）">

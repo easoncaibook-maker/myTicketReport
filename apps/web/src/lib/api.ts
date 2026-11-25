@@ -107,6 +107,27 @@ export const api = {
     a.click();
     URL.revokeObjectURL(url);
   },
+  /** 以当前登录态获取二进制内容（用于富文本内嵌图片预览） */
+  async blob(path: string): Promise<Blob> {
+    const url = `/api${path.replace(/^\/api/, '')}`;
+    const doFetch = async () => {
+      const headers: Record<string, string> = {};
+      if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
+      return fetch(url, { headers, credentials: 'include' });
+    };
+    let res = await doFetch();
+    if (res.status === 401) {
+      if (!refreshPromise) {
+        refreshPromise = doRefresh().finally(() => {
+          refreshPromise = null;
+        });
+      }
+      const ok = await refreshPromise;
+      if (ok) res = await doFetch();
+    }
+    if (!res.ok) throw new ApiError(res.status, null);
+    return res.blob();
+  },
 };
 
 export interface CurrentUser {

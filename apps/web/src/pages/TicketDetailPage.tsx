@@ -37,6 +37,9 @@ import {
 import { api, errorMessage } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { ACTION_LABELS, EVENT_DOT_COLORS, PriorityTag, RoleTag, StatusTag, formatBytes, formatHours } from '../lib/ui';
+import RichTextEditor from '../components/RichTextEditor';
+import RichTextView from '../components/RichTextView';
+import { richTextToPlainText } from '../lib/rich-text';
 
 export default function TicketDetailPage() {
   const { id } = useParams();
@@ -144,7 +147,7 @@ export default function TicketDetailPage() {
   };
 
   const postComment = async () => {
-    if (!comment.trim()) {
+    if (!richTextToPlainText(comment)) {
       message.warning('请输入评论内容');
       return;
     }
@@ -156,7 +159,7 @@ export default function TicketDetailPage() {
         attachmentIds.push(uploaded.id);
       }
       await api.post(`/tickets/${id}/comments`, {
-        content: comment.trim(),
+        content: comment,
         visibility: internal ? 'INTERNAL' : 'PUBLIC',
         attachmentIds,
       });
@@ -169,6 +172,17 @@ export default function TicketDetailPage() {
       message.error(errorMessage(e));
     } finally {
       setPosting(false);
+    }
+  };
+
+  /** 评论/描述中粘贴图片：直接上传为该工单附件 */
+  const uploadTicketImage = async (file: File) => {
+    try {
+      const uploaded = await api.upload(`/tickets/${id}/attachments`, file);
+      return { attachmentId: uploaded.id as string };
+    } catch (e) {
+      message.error(errorMessage(e));
+      throw e;
     }
   };
 
@@ -320,7 +334,7 @@ export default function TicketDetailPage() {
       </Card>
 
       <Card title="问题描述" style={{ marginBottom: 16 }}>
-        <div className="ticket-description">{ticket.description}</div>
+        <RichTextView html={ticket.description} className="ticket-description" />
         {ticket.resolution && (
           <>
             <Divider orientation="left">处理结果</Divider>
@@ -404,7 +418,10 @@ export default function TicketDetailPage() {
                     )}
                   </Space>
                 </div>
-                <div className={`comment-content ${c.visibility === 'INTERNAL' ? 'comment-internal' : ''}`}>{c.content}</div>
+                <RichTextView
+                  html={c.content}
+                  className={`comment-content ${c.visibility === 'INTERNAL' ? 'comment-internal' : ''}`}
+                />
                 {c.attachments?.length > 0 && (
                   <Space direction="vertical" style={{ marginTop: 6 }}>
                     {c.attachments.map((a: any) => (
@@ -442,13 +459,12 @@ export default function TicketDetailPage() {
             </span>
           </Space>
         )}
-        <Input.TextArea
-          rows={4}
+        <RichTextEditor
           value={comment}
-          onChange={(e) => setComment(e.target.value)}
-          maxLength={5000}
-          showCount
+          onChange={setComment}
+          uploadImage={uploadTicketImage}
           placeholder={internal ? '填写内部处理记录…' : '填写公开评论…'}
+          minHeight={110}
         />
         <div style={{ marginTop: 12, display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
           <Upload
@@ -568,8 +584,21 @@ export default function TicketDetailPage() {
               <Select options={PRIORITIES.map((p) => ({ value: p, label: PRIORITY_LABELS[p] }))} />
             </Form.Item>
           </Space>
-          <Form.Item name="description" label="问题描述" rules={[{ required: true }, { min: 10 }]}>
-            <Input.TextArea rows={6} maxLength={5000} showCount />
+          <Form.Item
+            name="description"
+            label="问题描述"
+            rules={[
+              {
+                validator: (_, value) => {
+                  const length = richTextToPlainText(value).length;
+                  if (length < 10) return Promise.reject(new Error('描述至少 10 个字'));
+                  if (length > 5000) return Promise.reject(new Error('描述最多 5000 个字'));
+                  return Promise.resolve();
+                },
+              },
+            ]}
+          >
+            <RichTextEditor uploadImage={uploadTicketImage} minHeight={140} />
           </Form.Item>
         </Form>
       </Modal>

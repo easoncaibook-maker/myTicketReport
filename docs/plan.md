@@ -282,9 +282,9 @@ TicketReport/
 | 方法 | 路径 | 权限 | 说明 |
 | --- | --- | --- | --- |
 | GET | `/tickets` | 登录 | 按角色自动限定范围；筛选、分页 |
-| POST | `/tickets` | 登录 | 创建（客户提单 / 内部工单 / 代客户提单；自动落组、发通知） |
+| POST | `/tickets` | 登录 | 创建（客户提单 / 内部工单 / 代客户提单；描述为富文本 HTML，服务端清洗并按其纯文本校验字数；自动落组、发通知） |
 | GET | `/tickets/:id` | 登录 | 详情（含客户侧过滤后的时间线与评论） |
-| PATCH | `/tickets/:id` | 提报人本人（PENDING） | 编辑主信息（不可改工单类型 / 企业归属） |
+| PATCH | `/tickets/:id` | 提报人本人（PENDING） | 编辑主信息（不可改工单类型 / 企业归属）；描述同样按富文本清洗与纯文本字数校验，用于提单后回填图片附件引用 |
 | POST | `/tickets/:id/claim` | AGENT | 认领 |
 | POST | `/tickets/:id/assign` | OPS_LEAD/ADMIN | `{ groupId, assigneeId?, reason }` |
 | POST | `/tickets/:id/transfer` | AGENT(本人)/OPS_LEAD/ADMIN | `{ groupId, assigneeId?, reason }` |
@@ -296,7 +296,7 @@ TicketReport/
 | POST | `/tickets/:id/reopen` | 提报人本人（客户工单需 REPORTER） | 校验时限 |
 | POST | `/tickets/:id/cancel` | 提报人本人（PENDING） | `{ reason? }` 撤回，终态「已取消」 |
 | GET | `/tickets/:id/events` | 登录 | 时间线（客户侧过滤） |
-| POST | `/tickets/:id/comments` | 登录 | `{ content, visibility, attachmentIds? }` |
+| POST | `/tickets/:id/comments` | 登录 | `{ content, visibility, attachmentIds? }`；`content` 为富文本 HTML，服务端清洗后入库，通知/邮件使用纯文本降级 |
 | DELETE | `/comments/:id` | 作者（10 分钟内） | 撤回 |
 | POST | `/tickets/:id/attachments` | 登录 | multipart 上传 |
 | GET | `/attachments/:id/download` | 登录（边界校验） | 流式下载 |
@@ -352,6 +352,15 @@ await prisma.$transaction(async (tx) => {
 - 下载：校验登录 → 校验工单可见性 → `res.sendFile` 绝对路径（路径由入库的 `stored_path` 拼接并做 `path.resolve` 前缀校验，防目录穿越）；
 - Nginx 不直接映射 uploads 目录。
 
+### 4.6 富文本与内嵌图片
+
+- **存储**：`Ticket.description`、`TicketComment.content` 存清洗后的 HTML；`apps/api/src/common/rich-text.ts` 用 `sanitize-html` 白名单（`p/br/strong/b/em/i/u/s/ul/ol/li/h1-h4/blockquote/code/pre/a/img/hr`），链接只留 `href/rel` 并强制补 `rel="noopener noreferrer"`，图片只留 `src/alt/title/width/height/data-attachment-id/data-pending-image`，协议仅 `http/https/mailto`；无有效来源（非 `http(s)://`、非附件下载地址且无占位标记）的 `img` 直接丢弃。历史纯文本数据在读取出口 `ticket.mapper.ts` 再清洗一次。
+- **长度**：zod 仅限制原始字符串 ≤20000；服务层用 `richTextToPlainText` 计算纯文本长度（描述 10–5000、评论 1–5000），避免 HTML 标签撑大内容。
+- **评论与通知**：`ticketComment` 等邮件模板使用清洗后的纯文本 `content.text`（保留段落换行），HTML 模板对文本做 `escapeHtml`，纯文本客户端得到合理降级。
+- **内嵌图片**：粘贴/上传的图片一律走 `/tickets/:id/attachments` 存为工单附件，正文写 `<img src="/api/attachments/:id/download" data-attachment-id=":id">`；下载接口沿用现有登录态 + 工单可见性校验（客户只能看本企业工单附件）。前端 `api.blob()` 带 access token 拉取后转 objectURL 展示，避免 token 过期或公开直链。
+- **提单时序**：工单尚不存在时，正文图片先写 `<img data-pending-image="N">` 占位；`POST /tickets` 成功后按序上传占位图片，再用 `PATCH /tickets/:id` 回填真实 `src` 与 `data-attachment-id`，失败的图片提示用户。
+- **前端组件**：`RichTextEditor`（Tiptap v3 + StarterKit + Image）负责编辑与 `paste/drop` 图片拦截；`RichTextView` 负责只读渲染并水合附件图片；样式沿用 AntD 表单风格。
+
 ---
 
 ## 5. 前端设计
@@ -389,6 +398,20 @@ await prisma.$transaction(async (tx) => {
 - `apiClient`：fetch 封装，自动附带 access token；401 时用 refresh 换新 token 并重放一次请求，失败则跳登录；
 - TanStack Query key 规划：`['tickets', filters]`、`['ticket', id]`、`['notifications', filters]`、`['unread-count']`；写操作成功后在 `onSuccess` 精准失效；
 - 不在前端做权限判断的「唯一防线」，所有隐藏仅用于体验。
+
+### 5.4 富文本编辑与图片
+
+- `apps/web/src/components/RichTextEditor.tsx`：Tiptap v3（`StarterKit` + 自定义 `AttachmentImage`），工具栏覆盖加粗/斜体/下划线/删除线/标题/列表/引用/代码/链接/撤销重做；`handlePaste` / `handleDrop` 拦截图片文件，调用 `uploadImage(file)` 后插入预览；
+- `apps/web/src/components/RichTextView.tsx`：`dangerouslySetInnerHTML` 渲染服务端已清洗的 HTML，并 `hydrateAttachmentImages` 按 `data-attachment-id` 用 `api.blob()` 拉取图片替换为 objectURL，组件卸载时释放；
+- 提单页与详情页（编辑弹窗、评论框）统一使用该编辑器；表单校验按 `richTextToPlainText` 计算纯文本长度，与服务端一致；
+- `apps/web/src/lib/rich-text.ts` 负责编辑态 HTML 归一化：`data-attachment-id` 强制使用附件下载地址；无来源的 `blob:` 预览在提交前去掉。
+
+### 5.5 开发态共享包解析（白屏修复）
+
+- **现象**：提交工单后页面空白，从列表点开工单详情同样白屏；列表页正常。
+- **根因**：`apps/web/node_modules/@ticketreport/shared` 是构建产物副本，Vite 预构建缓存 `node_modules/.vite/deps/@ticketreport_shared.js` 在共享包新增导出（`canEditWorkHours`）后未失效，详情页调用到 `undefined` 抛 `TypeError`，React 渲染异常导致整棵组件树卸载，只剩空白页；列表页未使用该导出所以不受影响。
+- **修复**：`apps/web/vite.config.ts` 增加 `resolve.alias`，把 `@ticketreport/shared` 直接指向 `packages/shared/src/index.ts`，并用 `server.fs.allow` 放开仓库根目录；开发态从此读取源码，不再依赖 node_modules 副本与预构建缓存，新增共享导出即时生效。生产构建仍走构建产物。
+- **排查结论**：全站仅 `TicketDetailPage` 使用 `canEditWorkHours`，其余页面只使用未变化的枚举与状态机函数，无第二处同类崩溃。
 
 ---
 
@@ -500,6 +523,7 @@ flowchart LR
 | 隔离专项 | 跨企业读写、附件直链、报表、通知、内部工单、代客提单 | Supertest | 12 条越权路径矩阵 + 内部工单客户不可见 + 代提企业隔离 |
 | 角色调整 | 运维侧升降级、客户账号转换拦截、审计 | Supertest | AGENT↔OPS_LEAD↔ADMIN 权限即时变化；`USER_ROLE_CHANGE` 落库 |
 | 密码重置 | 管理员重置、邮件链接重置、强制改密拦截、令牌失效、待激活账号重置 | Vitest（白名单单测）+ 接口脚本 | 旧访问/刷新令牌立即失效；未改密访问业务接口 403 `PASSWORD_CHANGE_REQUIRED`；改密后恢复；`USER_PASSWORD_RESET` 落库 |
+| 富文本 | HTML 白名单清洗、纯文本降级、内嵌图片附件与权限、字数校验、白屏回归 | Vitest + 接口脚本 + 浏览器 | 脚本/事件属性/`javascript:` 被清除；排版与附件图片保留；描述/评论按纯文本校验长度；跨企业下载 404；邮件正文为纯文本；详情页真实浏览器可正常渲染 |
 | E2E | 4 个角色的完整闭环 | Playwright | 见 M5-1 |
 | 手工验收 | 邮件实际投递、Docker 部署、PG 切换 | 清单 | 对照 requirements.md 第 10 章逐条勾选 |
 

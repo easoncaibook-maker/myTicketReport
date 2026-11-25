@@ -10,7 +10,7 @@ import { TicketsService } from './tickets.service';
 
 const createTicketSchema = z.object({
   title: z.string().min(5, '标题至少 5 个字').max(100, '标题最多 100 个字'),
-  description: z.string().min(10, '描述至少 10 个字').max(5000, '描述最多 5000 个字'),
+  description: z.string().min(1, '请填写问题描述').max(20000, '描述内容过长'),
   categoryId: z.string().min(1, '请选择分类'),
   priority: z.enum(PRIORITIES),
   /** 仅运维侧账号生效：INTERNAL=内部工单，CUSTOMER/缺省=代客户提单 */
@@ -21,7 +21,7 @@ const createTicketSchema = z.object({
 
 const updateTicketSchema = z.object({
   title: z.string().min(5, '标题至少 5 个字').max(100, '标题最多 100 个字').optional(),
-  description: z.string().min(10, '描述至少 10 个字').max(5000, '描述最多 5000 个字').optional(),
+  description: z.string().min(1, '请填写问题描述').max(20000, '描述内容过长').optional(),
   categoryId: z.string().min(1, '请选择分类').optional(),
   priority: z.enum(PRIORITIES).optional(),
 });
@@ -47,7 +47,7 @@ const workHoursSchema = z.object({
     .nullable(),
 });
 const commentSchema = z.object({
-  content: z.string().min(1, '请输入内容').max(5000, '内容不超过 5000 字'),
+  content: z.string().min(1, '请输入内容').max(20000, '内容过长'),
   visibility: z.enum(VISIBILITIES).optional(),
   attachmentIds: z.array(z.string()).optional(),
 });

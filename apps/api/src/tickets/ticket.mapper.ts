@@ -8,6 +8,12 @@ import {
   TicketType,
   Priority,
 } from '@ticketreport/shared';
+import { sanitizeRichText } from '../common/rich-text';
+
+/** 历史数据可能是纯文本，统一在出口再清洗一次，确保前端拿到的 HTML 安全 */
+function safeHtml(input: unknown): string {
+  return sanitizeRichText(typeof input === 'string' ? input : '');
+}
 
 export function ticketSummary(ticket: any) {
   const ticketType = (ticket.ticketType ?? 'CUSTOMER') as TicketType;
@@ -15,7 +21,7 @@ export function ticketSummary(ticket: any) {
     id: ticket.id,
     ticketNo: ticket.ticketNo,
     title: ticket.title,
-    description: ticket.description,
+    description: safeHtml(ticket.description),
     ticketType,
     ticketTypeLabel: TICKET_TYPE_LABELS[ticketType] ?? ticket.ticketType,
     isInternal: ticketType === 'INTERNAL',
@@ -53,7 +59,7 @@ export function commentView(comment: any) {
     authorRole: comment.authorRole,
     authorRoleLabel: ROLE_LABELS[comment.authorRole as Role] ?? comment.authorRole,
     visibility: comment.visibility,
-    content: comment.content,
+    content: safeHtml(comment.content),
     createdAt: comment.createdAt,
     deletedAt: comment.deletedAt,
     attachments: (comment.attachments ?? []).map(attachmentView),
