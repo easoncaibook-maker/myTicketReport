@@ -12,7 +12,7 @@ import {
 } from '@ticketreport/shared';
 import { api, errorMessage } from '../lib/api';
 import { useAuth } from '../lib/auth';
-import { PriorityTag, StatusTag } from '../lib/ui';
+import { PriorityTag, StatusTag, formatHours } from '../lib/ui';
 
 const { RangePicker } = DatePicker;
 
@@ -98,6 +98,13 @@ export default function TicketListPage() {
       dataIndex: 'assigneeName',
       width: 110,
       render: (v: string) => v || <Tag>未分配</Tag>,
+    },
+    {
+      title: '处理工时',
+      dataIndex: 'workHours',
+      width: 110,
+      align: 'right',
+      render: (v: number | null) => formatHours(v),
     },
     {
       title: '更新时间',

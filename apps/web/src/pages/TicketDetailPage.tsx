@@ -9,6 +9,7 @@ import {
   Empty,
   Form,
   Input,
+  InputNumber,
   List,
   Modal,
   Result,
@@ -30,11 +31,12 @@ import {
   TRANSITIONS,
   TransitionDef,
   availableActions,
+  canEditWorkHours,
   formatDate,
 } from '@ticketreport/shared';
 import { api, errorMessage } from '../lib/api';
 import { useAuth } from '../lib/auth';
-import { ACTION_LABELS, EVENT_DOT_COLORS, PriorityTag, RoleTag, StatusTag, formatBytes } from '../lib/ui';
+import { ACTION_LABELS, EVENT_DOT_COLORS, PriorityTag, RoleTag, StatusTag, formatBytes, formatHours } from '../lib/ui';
 
 export default function TicketDetailPage() {
   const { id } = useParams();
@@ -50,6 +52,8 @@ export default function TicketDetailPage() {
   const [posting, setPosting] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [editForm] = Form.useForm();
+  const [workHoursOpen, setWorkHoursOpen] = useState(false);
+  const [workHoursForm] = Form.useForm();
 
   const { data: ticket, isLoading, error } = useQuery({
     queryKey: ['ticket', id],
@@ -89,6 +93,12 @@ export default function TicketDetailPage() {
       }
       return true;
     });
+  }, [ticket, user]);
+
+  const canEditHours = useMemo(() => {
+    if (!ticket || !user) return false;
+    if (!canEditWorkHours(user.role as Role, ticket.status)) return false;
+    return user.role !== 'AGENT' || ticket.assigneeId === user.id;
   }, [ticket, user]);
 
   const openAction = (def: TransitionDef) => {
@@ -170,6 +180,19 @@ export default function TicketDetailPage() {
       await api.patch(`/tickets/${id}`, values);
       message.success('已保存');
       setEditOpen(false);
+      invalidate();
+    } catch (e: any) {
+      if (e?.errorFields) return;
+      message.error(errorMessage(e));
+    }
+  };
+
+  const submitWorkHours = async () => {
+    try {
+      const values = await workHoursForm.validateFields();
+      await api.patch(`/tickets/${id}/work-hours`, { workHours: values.workHours });
+      message.success('处理工时已保存');
+      setWorkHoursOpen(false);
       invalidate();
     } catch (e: any) {
       if (e?.errorFields) return;
@@ -265,6 +288,23 @@ export default function TicketDetailPage() {
           {ticket.closedAt && <Descriptions.Item label="关闭时间">{formatDate(ticket.closedAt)}</Descriptions.Item>}
           {ticket.cancelledAt && <Descriptions.Item label="撤回时间">{formatDate(ticket.cancelledAt)}</Descriptions.Item>}
           <Descriptions.Item label="重开次数">{ticket.reopenCount ?? 0}</Descriptions.Item>
+          <Descriptions.Item label="处理工时">
+            <Space size={4}>
+              <span>{formatHours(ticket.workHours)}</span>
+              {canEditHours && (
+                <Button
+                  type="link"
+                  size="small"
+                  onClick={() => {
+                    workHoursForm.setFieldsValue({ workHours: ticket.workHours ?? undefined });
+                    setWorkHoursOpen(true);
+                  }}
+                >
+                  {ticket.workHours === null || ticket.workHours === undefined ? '填写' : '修改'}
+                </Button>
+              )}
+            </Space>
+          </Descriptions.Item>
         </Descriptions>
       </Card>
 
@@ -310,8 +350,16 @@ export default function TicketDetailPage() {
                   <Space wrap>
                     <strong>{e.actorName}</strong>
                     <span>{ACTION_LABELS[e.action] ?? e.action}</span>
-                    {e.fromValue && <Tag>{e.fromValue}</Tag>}
-                    {e.toValue && <Tag color="blue">{e.toValue}</Tag>}
+                    {e.action === 'WORK_HOURS' ? (
+                      <Tag color="cyan">
+                        {e.fromValue ?? '未填写'} → {e.toValue ?? '未填写'} 小时
+                      </Tag>
+                    ) : (
+                      <>
+                        {e.fromValue && <Tag>{e.fromValue}</Tag>}
+                        {e.toValue && <Tag color="blue">{e.toValue}</Tag>}
+                      </>
+                    )}
                     {e.visible === 'INTERNAL' && <Tag color="gold">内部</Tag>}
                   </Space>
                   <div style={{ fontSize: 12, color: '#8c8c8c' }}>{formatDate(e.createdAt)}</div>
@@ -472,6 +520,27 @@ export default function TicketDetailPage() {
               {actionDef?.action === 'RELEASE' && '撤回认领后工单回到待受理，由组内重新认领。'}
             </div>
           )}
+        </Form>
+      </Modal>
+
+      <Modal
+        open={workHoursOpen}
+        title="填写处理工时"
+        onCancel={() => setWorkHoursOpen(false)}
+        onOk={submitWorkHours}
+        okText="保存"
+        cancelText="取消"
+        destroyOnClose
+      >
+        <Form form={workHoursForm} layout="vertical" style={{ marginTop: 12 }}>
+          <Form.Item
+            name="workHours"
+            label="处理工时（小时）"
+            rules={[{ required: true, message: '请输入处理工时' }]}
+          >
+            <InputNumber min={0} max={999.9} step={0.1} precision={1} style={{ width: '100%' }} placeholder="例如 2.5" />
+          </Form.Item>
+          <div style={{ color: '#8c8c8c', fontSize: 12 }}>支持一位小数，修改会记录到工单时间线。</div>
         </Form>
       </Modal>
 

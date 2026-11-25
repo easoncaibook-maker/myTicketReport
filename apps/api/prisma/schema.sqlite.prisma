@@ -140,6 +140,8 @@ model Ticket {
   closeReason    String?
   cancelledAt    DateTime?
   cancelReason   String?
+  /** 处理工时（小时，一位小数） */
+  workHours      Float?
   reopenCount    Int       @default(0)
   version        Int       @default(0)
   lastActivityAt DateTime  @default(now())

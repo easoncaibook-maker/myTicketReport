@@ -166,6 +166,14 @@ export function findTransition(action: string): TransitionDef | undefined {
   return TRANSITIONS.find((t) => t.action === action);
 }
 
+/** 处理工时：允许填写的角色与工单状态（处理中及之后） */
+export const WORK_HOURS_ROLES: Role[] = ['AGENT', 'OPS_LEAD', 'ADMIN'];
+export const WORK_HOURS_STATUSES: TicketStatus[] = ['PROCESSING', 'PENDING_CONFIRM', 'CLOSED'];
+
+export function canEditWorkHours(role: Role, status: TicketStatus): boolean {
+  return WORK_HOURS_ROLES.includes(role) && WORK_HOURS_STATUSES.includes(status);
+}
+
 export const ACTOR_ROLE_LABELS: Record<string, string> = ROLE_LABELS;
 
 export interface Paged<T> {

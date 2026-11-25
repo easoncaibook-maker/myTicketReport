@@ -29,6 +29,14 @@ const transferSchema = z.object({
 const reasonSchema = z.object({ reason: z.string().min(2, '请填写原因').max(500) });
 const optionalReasonSchema = z.object({ reason: z.string().max(500).optional() });
 const resolveSchema = z.object({ resolution: z.string().min(5, '请填写处理结果').max(2000) });
+const workHoursSchema = z.object({
+  workHours: z
+    .number({ invalid_type_error: '请输入工时' })
+    .min(0, '工时不能小于 0')
+    .max(999.9, '工时不能超过 999.9')
+    .refine((v) => Math.abs(v * 10 - Math.round(v * 10)) < 1e-6, '工时最多保留一位小数')
+    .nullable(),
+});
 const commentSchema = z.object({
   content: z.string().min(1, '请输入内容').max(5000, '内容不超过 5000 字'),
   visibility: z.enum(VISIBILITIES).optional(),
@@ -107,6 +115,11 @@ export class TicketsController {
   @Post(':id/cancel')
   cancel(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body(new ZodPipe(optionalReasonSchema)) body: any) {
     return this.service.cancel(user, id, body);
+  }
+
+  @Patch(':id/work-hours')
+  updateWorkHours(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body(new ZodPipe(workHoursSchema)) body: any) {
+    return this.service.updateWorkHours(user, id, body.workHours);
   }
 
   @Post(':id/comments')

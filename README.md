@@ -70,6 +70,10 @@ Copy-Item apps/api/.env apps/api/.env.local   # 可选，仅作备份参考
 | `npm run seed` | 写入演示数据（已有管理员时自动跳过） |
 | `npm run seed:base` | 空库初始化：仅写入管理员、分类、处理组和系统设置，不含演示数据 |
 
+### 已有数据库升级
+
+结构变更新增的字段都是可空列，直接执行 `npm run db:push`（PostgreSQL 用 `npm run db:push:pg`）即可平滑升级，已有数据保留、无需重建库。例如「处理工时」字段 `Ticket.workHours` 升级后历史工单为空值，可由处理人在工单详情中补填。
+
 ## Docker 一键部署
 
 ```powershell

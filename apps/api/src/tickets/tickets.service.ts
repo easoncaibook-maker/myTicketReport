@@ -10,10 +10,15 @@ import {
   ROLE_LABELS,
   STATUS_LABELS,
   TicketAction,
+  TicketStatus,
+  WORK_HOURS_ROLES,
+  WORK_HOURS_STATUSES,
   availableActions,
+  canEditWorkHours,
   findTransition,
 } from '@ticketreport/shared';
 import type { Response } from 'express';
+import { AuditService } from '../audit/audit.module';
 import { AuthUser } from '../common/decorators';
 import { ticketScope } from '../common/scope';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -32,6 +37,7 @@ export class TicketsService {
     private readonly settings: SettingsService,
     private readonly config: ConfigService,
     private readonly attachments: AttachmentsService,
+    private readonly audit: AuditService,
   ) {}
 
   private link(ticketId: string) {
@@ -743,6 +749,45 @@ export class TicketsService {
       ticketId: id,
       recipients: await this.groupRecipients(ticket.groupId),
     });
+    return this.get(user, id);
+  }
+
+  async updateWorkHours(user: AuthUser, id: string, workHours: number | null) {
+    const ticket = await this.access.findAccessible(id, user);
+    if (!canEditWorkHours(user.role, ticket.status as TicketStatus)) {
+      if (!WORK_HOURS_ROLES.includes(user.role)) {
+        throw new ForbiddenException('没有填写处理工时的权限');
+      }
+      throw new ConflictException({
+        code: 'TICKET_WORK_HOURS_NOT_EDITABLE',
+        message: '仅处理中及之后的状态可以填写处理工时',
+      });
+    }
+    if (user.role === 'AGENT' && ticket.assigneeId !== user.id) {
+      throw new ForbiddenException('只能填写自己处理工单的工时');
+    }
+    const next = workHours === null ? null : Math.round(workHours * 10) / 10;
+    const before = ticket.workHours ?? null;
+    if (before === next) return this.get(user, id);
+    await this.prisma.$transaction(async (tx) => {
+      const updated = await tx.ticket.updateMany({
+        where: { id, version: ticket.version },
+        data: { workHours: next, version: { increment: 1 }, lastActivityAt: new Date() },
+      });
+      if (updated.count === 0) throw new ConflictException('工单已被更新，请刷新后重试');
+      await tx.ticketEvent.create({
+        data: {
+          ticketId: id,
+          actorId: user.id,
+          actorName: user.name,
+          action: 'WORK_HOURS',
+          fromValue: before === null ? null : String(before),
+          toValue: next === null ? null : String(next),
+          visibility: 'PUBLIC',
+        },
+      });
+    });
+    await this.audit.log(user.id, 'TICKET_WORK_HOURS', 'Ticket', id, { from: before, to: next });
     return this.get(user, id);
   }
 

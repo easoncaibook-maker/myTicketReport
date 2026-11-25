@@ -21,6 +21,7 @@ export function ticketSummary(ticket: any) {
     categoryId: ticket.categoryId,
     categoryName: ticket.category?.name,
     reopenCount: ticket.reopenCount,
+    workHours: ticket.workHours ?? null,
     createdAt: ticket.createdAt,
     updatedAt: ticket.updatedAt,
     lastActivityAt: ticket.lastActivityAt,
