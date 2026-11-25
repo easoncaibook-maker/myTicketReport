@@ -16,6 +16,9 @@ import { SettingsService } from '../settings/settings.module';
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
 const LOGIN_MAX_FAILS = 5;
 
+/** 管理员重置后的默认密码，首次登录必须修改 */
+export const DEFAULT_RESET_PASSWORD = 'Passw0rd!';
+
 @Injectable()
 export class AuthService {
   private readonly loginFails = new Map<string, { count: number; firstAt: number }>();
@@ -28,9 +31,9 @@ export class AuthService {
     private readonly settings: SettingsService,
   ) {}
 
-  private async signAccess(user: { id: string; role: string }) {
+  private async signAccess(user: { id: string; role: string; tokenVersion?: number }) {
     return this.jwt.signAsync(
-      { sub: user.id, role: user.role },
+      { sub: user.id, role: user.role, ver: user.tokenVersion ?? 0 },
       { expiresIn: (this.config.get('ACCESS_TOKEN_TTL') || '900s') as any },
     );
   }
@@ -136,6 +139,7 @@ export class AuthService {
       enterpriseId: user.enterpriseId,
       enterpriseName: user.enterprise?.name ?? null,
       groupIds: (user.groupMembers ?? []).map((g: any) => g.groupId),
+      mustChangePassword: !!user.mustChangePassword,
     };
   }
 
@@ -207,12 +211,26 @@ export class AuthService {
 
   async resetPassword(token: string, password: string) {
     const row = await this.consumeToken(token, 'RESET_PASSWORD');
+    const now = new Date();
     await this.prisma.$transaction([
-      this.prisma.authToken.update({ where: { id: row.id }, data: { usedAt: new Date() } }),
-      this.prisma.user.update({ where: { id: row.userId }, data: { passwordHash: hashPassword(password) } }),
+      this.prisma.authToken.update({ where: { id: row.id }, data: { usedAt: now } }),
+      this.prisma.authToken.updateMany({
+        where: { userId: row.userId, type: 'RESET_PASSWORD', usedAt: null },
+        data: { usedAt: now },
+      }),
+      this.prisma.user.update({
+        where: { id: row.userId },
+        data: {
+          passwordHash: hashPassword(password),
+          mustChangePassword: true,
+          passwordChangedAt: now,
+          tokenVersion: { increment: 1 },
+          ...(row.user.status === 'INVITED' ? { status: 'ACTIVE', activatedAt: now } : {}),
+        },
+      }),
       this.prisma.refreshToken.updateMany({
         where: { userId: row.userId, revokedAt: null },
-        data: { revokedAt: new Date() },
+        data: { revokedAt: now },
       }),
     ]);
     return { ok: true };
@@ -223,13 +241,54 @@ export class AuthService {
     if (!user || !verifyPassword(oldPassword, user.passwordHash)) {
       throw new BadRequestException('原密码不正确');
     }
+    if (oldPassword === newPassword) {
+      throw new BadRequestException('新密码不能与原密码相同');
+    }
+    const now = new Date();
     await this.prisma.$transaction([
-      this.prisma.user.update({ where: { id: userId }, data: { passwordHash: hashPassword(newPassword) } }),
+      this.prisma.user.update({
+        where: { id: userId },
+        data: {
+          passwordHash: hashPassword(newPassword),
+          mustChangePassword: false,
+          passwordChangedAt: now,
+          tokenVersion: { increment: 1 },
+        },
+      }),
       this.prisma.refreshToken.updateMany({
         where: { userId, revokedAt: null },
-        data: { revokedAt: new Date() },
+        data: { revokedAt: now },
       }),
     ]);
     return { ok: true };
+  }
+
+  /** 管理员重置密码：恢复为默认密码，标记下次登录必须改密，并使现有会话与令牌失效 */
+  async adminResetPassword(userId: string) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new BadRequestException('用户不存在');
+    const now = new Date();
+    const activating = user.status === 'INVITED';
+    await this.prisma.$transaction([
+      this.prisma.user.update({
+        where: { id: userId },
+        data: {
+          passwordHash: hashPassword(DEFAULT_RESET_PASSWORD),
+          mustChangePassword: true,
+          passwordChangedAt: now,
+          tokenVersion: { increment: 1 },
+          ...(activating ? { status: 'ACTIVE', activatedAt: now } : {}),
+        },
+      }),
+      this.prisma.refreshToken.updateMany({
+        where: { userId, revokedAt: null },
+        data: { revokedAt: now },
+      }),
+      this.prisma.authToken.updateMany({
+        where: { userId, usedAt: null },
+        data: { usedAt: now },
+      }),
+    ]);
+    return { ok: true, defaultPassword: DEFAULT_RESET_PASSWORD };
   }
 }

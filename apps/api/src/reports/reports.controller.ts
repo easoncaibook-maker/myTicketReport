@@ -23,14 +23,15 @@ export class ReportsController {
   @Get('overview')
   async overview(@CurrentUser() user: AuthUser, @Query() query: any) {
     const where = this.buildWhere(user, query);
-    const [byStatus, byPriority, byCategory, tickets] = await Promise.all([
+    const [byStatus, byPriority, byCategory, tickets, hoursAgg] = await Promise.all([
       this.prisma.ticket.groupBy({ by: ['status'], where, _count: { _all: true } }),
       this.prisma.ticket.groupBy({ by: ['priority'], where, _count: { _all: true } }),
       this.prisma.ticket.groupBy({ by: ['categoryId'], where, _count: { _all: true } }),
       this.prisma.ticket.findMany({
         where: { ...where, status: 'CLOSED', closedAt: { not: null } },
-        select: { createdAt: true, closedAt: true },
+        select: { createdAt: true, closedAt: true, workHours: true },
       }),
+      this.prisma.ticket.aggregate({ where, _sum: { workHours: true } }),
     ]);
     const categories = await this.prisma.category.findMany({ select: { id: true, name: true } });
     const catMap = new Map(categories.map((c) => [c.id, c.name]));
@@ -58,6 +59,7 @@ export class ReportsController {
         .map((c) => ({ name: catMap.get(c.categoryId) ?? '未分类', count: c._count._all }))
         .sort((a, b) => b.count - a.count),
       avgHandleHours: Number(avgHours.toFixed(1)),
+      totalWorkHours: Number((hoursAgg._sum.workHours ?? 0).toFixed(1)),
     };
   }
 
@@ -66,7 +68,7 @@ export class ReportsController {
     if (user.role === 'REPORTER') return { items: [] };
     const where = this.buildWhere(user, query);
     const since = new Date(Date.now() - 30 * 86400_000);
-    const [processing, closed] = await Promise.all([
+    const [processing, closed, hours] = await Promise.all([
       this.prisma.ticket.groupBy({
         by: ['assigneeId'],
         where: { ...where, status: 'PROCESSING', assigneeId: { not: null } },
@@ -77,8 +79,15 @@ export class ReportsController {
         where: { ...where, status: 'CLOSED', closedAt: { gte: since }, assigneeId: { not: null } },
         _count: { _all: true },
       }),
+      this.prisma.ticket.groupBy({
+        by: ['assigneeId'],
+        where: { ...where, assigneeId: { not: null }, workHours: { not: null } },
+        _sum: { workHours: true },
+      }),
     ]);
-    const ids = [...new Set([...processing, ...closed].map((x) => x.assigneeId as string))];
+    const ids = [
+      ...new Set([...processing, ...closed, ...hours].map((x) => x.assigneeId as string)),
+    ];
     const users = await this.prisma.user.findMany({
       where: { id: { in: ids } },
       select: { id: true, name: true },
@@ -90,6 +99,7 @@ export class ReportsController {
         assigneeName: names.get(id) ?? id,
         processing: processing.find((p) => p.assigneeId === id)?._count._all ?? 0,
         closed30: closed.find((c) => c.assigneeId === id)?._count._all ?? 0,
+        workHours: Number((hours.find((h) => h.assigneeId === id)?._sum.workHours ?? 0).toFixed(1)),
       })),
     };
   }

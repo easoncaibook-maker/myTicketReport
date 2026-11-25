@@ -9,6 +9,7 @@ import {
   Empty,
   Form,
   Input,
+  InputNumber,
   List,
   Modal,
   Result,
@@ -30,11 +31,15 @@ import {
   TRANSITIONS,
   TransitionDef,
   availableActions,
+  canEditWorkHours,
   formatDate,
 } from '@ticketreport/shared';
 import { api, errorMessage } from '../lib/api';
 import { useAuth } from '../lib/auth';
-import { ACTION_LABELS, EVENT_DOT_COLORS, PriorityTag, RoleTag, StatusTag, formatBytes } from '../lib/ui';
+import { ACTION_LABELS, EVENT_DOT_COLORS, PriorityTag, RoleTag, StatusTag, formatBytes, formatHours } from '../lib/ui';
+import RichTextEditor from '../components/RichTextEditor';
+import RichTextView from '../components/RichTextView';
+import { richTextToPlainText } from '../lib/rich-text';
 
 export default function TicketDetailPage() {
   const { id } = useParams();
@@ -50,6 +55,8 @@ export default function TicketDetailPage() {
   const [posting, setPosting] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [editForm] = Form.useForm();
+  const [workHoursOpen, setWorkHoursOpen] = useState(false);
+  const [workHoursForm] = Form.useForm();
 
   const { data: ticket, isLoading, error } = useQuery({
     queryKey: ['ticket', id],
@@ -81,14 +88,28 @@ export default function TicketDetailPage() {
 
   const actions = useMemo(() => {
     if (!ticket || !user) return [];
-    return availableActions(ticket.status, user.role as Role).filter((def) => {
-      if (['CONFIRM', 'REJECT', 'REOPEN', 'CANCEL'].includes(def.action)) return ticket.reporterId === user.id;
+    const isReporter = ticket.isInternal
+      ? ticket.reporterId === user.id
+      : ticket.reporterId === user.id ||
+        (!!ticket.onBehalf && user.role === 'REPORTER' && user.enterpriseId === ticket.enterpriseId);
+    return availableActions(ticket.status, user.role as Role, {
+      isReporter,
+      isInternal: !!ticket.isInternal,
+    }).filter((def) => {
+      if (['CONFIRM', 'REJECT', 'REOPEN'].includes(def.action)) return isReporter;
+      if (def.action === 'CANCEL') return ticket.reporterId === user.id;
       if (def.action === 'CLAIM') return user.role === 'AGENT' && user.groupIds?.includes(ticket.groupId);
       if (def.action === 'RESOLVE' || def.action === 'TRANSFER') {
         return user.role !== 'AGENT' || ticket.assigneeId === user.id;
       }
       return true;
     });
+  }, [ticket, user]);
+
+  const canEditHours = useMemo(() => {
+    if (!ticket || !user) return false;
+    if (!canEditWorkHours(user.role as Role, ticket.status)) return false;
+    return user.role !== 'AGENT' || ticket.assigneeId === user.id;
   }, [ticket, user]);
 
   const openAction = (def: TransitionDef) => {
@@ -126,7 +147,7 @@ export default function TicketDetailPage() {
   };
 
   const postComment = async () => {
-    if (!comment.trim()) {
+    if (!richTextToPlainText(comment)) {
       message.warning('请输入评论内容');
       return;
     }
@@ -138,7 +159,7 @@ export default function TicketDetailPage() {
         attachmentIds.push(uploaded.id);
       }
       await api.post(`/tickets/${id}/comments`, {
-        content: comment.trim(),
+        content: comment,
         visibility: internal ? 'INTERNAL' : 'PUBLIC',
         attachmentIds,
       });
@@ -151,6 +172,17 @@ export default function TicketDetailPage() {
       message.error(errorMessage(e));
     } finally {
       setPosting(false);
+    }
+  };
+
+  /** 评论/描述中粘贴图片：直接上传为该工单附件 */
+  const uploadTicketImage = async (file: File) => {
+    try {
+      const uploaded = await api.upload(`/tickets/${id}/attachments`, file);
+      return { attachmentId: uploaded.id as string };
+    } catch (e) {
+      message.error(errorMessage(e));
+      throw e;
     }
   };
 
@@ -170,6 +202,19 @@ export default function TicketDetailPage() {
       await api.patch(`/tickets/${id}`, values);
       message.success('已保存');
       setEditOpen(false);
+      invalidate();
+    } catch (e: any) {
+      if (e?.errorFields) return;
+      message.error(errorMessage(e));
+    }
+  };
+
+  const submitWorkHours = async () => {
+    try {
+      const values = await workHoursForm.validateFields();
+      await api.patch(`/tickets/${id}/work-hours`, { workHours: values.workHours });
+      message.success('处理工时已保存');
+      setWorkHoursOpen(false);
       invalidate();
     } catch (e: any) {
       if (e?.errorFields) return;
@@ -206,6 +251,8 @@ export default function TicketDetailPage() {
               </span>
               <StatusTag status={ticket.status} />
               <PriorityTag priority={ticket.priority} />
+              {ticket.isInternal && <Tag color="geekblue">内部工单</Tag>}
+              {ticket.onBehalf && <Tag color="gold">代客户提单</Tag>}
               {ticket.groupName && <Tag color="blue">{ticket.groupName}</Tag>}
               {ticket.categoryName && <Tag>{ticket.categoryName}</Tag>}
             </Space>
@@ -222,7 +269,7 @@ export default function TicketDetailPage() {
                 {def.label}
               </Button>
             ))}
-            {user?.role === 'REPORTER' && ticket.reporterId === user.id && ticket.status === 'PENDING' && (
+            {ticket.reporterId === user?.id && ticket.status === 'PENDING' && (
               <Button
                 onClick={() => {
                   editForm.setFieldsValue({
@@ -253,23 +300,41 @@ export default function TicketDetailPage() {
         )}
 
         <Descriptions column={{ xs: 1, sm: 2, md: 3 }} size="small" style={{ marginTop: 16 }}>
-          <Descriptions.Item label="提报人">
+          <Descriptions.Item label={ticket.onBehalf ? '代提人' : '提报人'}>
             {ticket.reporterName}
             {ticket.reporterEmail ? `（${ticket.reporterEmail}）` : ''}
+            {ticket.onBehalf && <Tag color="gold" style={{ marginLeft: 8 }}>代客户提单</Tag>}
           </Descriptions.Item>
           <Descriptions.Item label="处理人">{ticket.assigneeName || '未分配'}</Descriptions.Item>
           <Descriptions.Item label="处理组">{ticket.groupName || '-'}</Descriptions.Item>
-          <Descriptions.Item label="企业">{ticket.enterpriseName || '-'}</Descriptions.Item>
+          <Descriptions.Item label="企业">{ticket.isInternal ? '内部工单' : ticket.enterpriseName || '-'}</Descriptions.Item>
           <Descriptions.Item label="创建时间">{formatDate(ticket.createdAt)}</Descriptions.Item>
           <Descriptions.Item label="更新时间">{formatDate(ticket.lastActivityAt)}</Descriptions.Item>
           {ticket.closedAt && <Descriptions.Item label="关闭时间">{formatDate(ticket.closedAt)}</Descriptions.Item>}
           {ticket.cancelledAt && <Descriptions.Item label="撤回时间">{formatDate(ticket.cancelledAt)}</Descriptions.Item>}
           <Descriptions.Item label="重开次数">{ticket.reopenCount ?? 0}</Descriptions.Item>
+          <Descriptions.Item label="处理工时">
+            <Space size={4}>
+              <span>{formatHours(ticket.workHours)}</span>
+              {canEditHours && (
+                <Button
+                  type="link"
+                  size="small"
+                  onClick={() => {
+                    workHoursForm.setFieldsValue({ workHours: ticket.workHours ?? undefined });
+                    setWorkHoursOpen(true);
+                  }}
+                >
+                  {ticket.workHours === null || ticket.workHours === undefined ? '填写' : '修改'}
+                </Button>
+              )}
+            </Space>
+          </Descriptions.Item>
         </Descriptions>
       </Card>
 
       <Card title="问题描述" style={{ marginBottom: 16 }}>
-        <div className="ticket-description">{ticket.description}</div>
+        <RichTextView html={ticket.description} className="ticket-description" />
         {ticket.resolution && (
           <>
             <Divider orientation="left">处理结果</Divider>
@@ -310,8 +375,16 @@ export default function TicketDetailPage() {
                   <Space wrap>
                     <strong>{e.actorName}</strong>
                     <span>{ACTION_LABELS[e.action] ?? e.action}</span>
-                    {e.fromValue && <Tag>{e.fromValue}</Tag>}
-                    {e.toValue && <Tag color="blue">{e.toValue}</Tag>}
+                    {e.action === 'WORK_HOURS' ? (
+                      <Tag color="cyan">
+                        {e.fromValue ?? '未填写'} → {e.toValue ?? '未填写'} 小时
+                      </Tag>
+                    ) : (
+                      <>
+                        {e.fromValue && <Tag>{e.fromValue}</Tag>}
+                        {e.toValue && <Tag color="blue">{e.toValue}</Tag>}
+                      </>
+                    )}
                     {e.visible === 'INTERNAL' && <Tag color="gold">内部</Tag>}
                   </Space>
                   <div style={{ fontSize: 12, color: '#8c8c8c' }}>{formatDate(e.createdAt)}</div>
@@ -345,7 +418,10 @@ export default function TicketDetailPage() {
                     )}
                   </Space>
                 </div>
-                <div className={`comment-content ${c.visibility === 'INTERNAL' ? 'comment-internal' : ''}`}>{c.content}</div>
+                <RichTextView
+                  html={c.content}
+                  className={`comment-content ${c.visibility === 'INTERNAL' ? 'comment-internal' : ''}`}
+                />
                 {c.attachments?.length > 0 && (
                   <Space direction="vertical" style={{ marginTop: 6 }}>
                     {c.attachments.map((a: any) => (
@@ -383,13 +459,12 @@ export default function TicketDetailPage() {
             </span>
           </Space>
         )}
-        <Input.TextArea
-          rows={4}
+        <RichTextEditor
           value={comment}
-          onChange={(e) => setComment(e.target.value)}
-          maxLength={5000}
-          showCount
+          onChange={setComment}
+          uploadImage={uploadTicketImage}
           placeholder={internal ? '填写内部处理记录…' : '填写公开评论…'}
+          minHeight={110}
         />
         <div style={{ marginTop: 12, display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
           <Upload
@@ -475,6 +550,27 @@ export default function TicketDetailPage() {
         </Form>
       </Modal>
 
+      <Modal
+        open={workHoursOpen}
+        title="填写处理工时"
+        onCancel={() => setWorkHoursOpen(false)}
+        onOk={submitWorkHours}
+        okText="保存"
+        cancelText="取消"
+        destroyOnClose
+      >
+        <Form form={workHoursForm} layout="vertical" style={{ marginTop: 12 }}>
+          <Form.Item
+            name="workHours"
+            label="处理工时（小时）"
+            rules={[{ required: true, message: '请输入处理工时' }]}
+          >
+            <InputNumber min={0} max={999.9} step={0.1} precision={1} style={{ width: '100%' }} placeholder="例如 2.5" />
+          </Form.Item>
+          <div style={{ color: '#8c8c8c', fontSize: 12 }}>支持一位小数，修改会记录到工单时间线。</div>
+        </Form>
+      </Modal>
+
       <Modal open={editOpen} title="编辑工单" onCancel={() => setEditOpen(false)} onOk={submitEdit} okText="保存" destroyOnClose>
         <Form form={editForm} layout="vertical" style={{ marginTop: 12 }}>
           <Form.Item name="title" label="标题" rules={[{ required: true }, { min: 5, max: 100 }]}>
@@ -488,8 +584,21 @@ export default function TicketDetailPage() {
               <Select options={PRIORITIES.map((p) => ({ value: p, label: PRIORITY_LABELS[p] }))} />
             </Form.Item>
           </Space>
-          <Form.Item name="description" label="问题描述" rules={[{ required: true }, { min: 10 }]}>
-            <Input.TextArea rows={6} maxLength={5000} showCount />
+          <Form.Item
+            name="description"
+            label="问题描述"
+            rules={[
+              {
+                validator: (_, value) => {
+                  const length = richTextToPlainText(value).length;
+                  if (length < 10) return Promise.reject(new Error('描述至少 10 个字'));
+                  if (length > 5000) return Promise.reject(new Error('描述最多 5000 个字'));
+                  return Promise.resolve();
+                },
+              },
+            ]}
+          >
+            <RichTextEditor uploadImage={uploadTicketImage} minHeight={140} />
           </Form.Item>
         </Form>
       </Modal>

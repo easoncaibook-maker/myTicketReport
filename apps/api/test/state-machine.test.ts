@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { TRANSITIONS, availableActions, findTransition } from '@ticketreport/shared';
+import { TICKET_TYPE_LABELS, TICKET_TYPES, TRANSITIONS, availableActions, findTransition } from '@ticketreport/shared';
 
 describe('工单状态机', () => {
   it('待受理：提报人可撤回，处理人可认领', () => {
@@ -30,5 +30,24 @@ describe('工单状态机', () => {
     const actions = TRANSITIONS.map((t) => t.action);
     expect(new Set(actions).size).toBe(actions.length);
     expect(findTransition('CANCEL')?.to).toBe('CANCELLED');
+  });
+
+  it('内部工单待确认仅提报人本人可操作（不限角色）', () => {
+    const reporter = availableActions('PENDING_CONFIRM', 'AGENT', { isInternal: true, isReporter: true }).map((t) => t.action);
+    const other = availableActions('PENDING_CONFIRM', 'AGENT', { isInternal: true, isReporter: false }).map((t) => t.action);
+    expect(reporter.sort()).toEqual(['CONFIRM', 'REJECT']);
+    expect(other).toHaveLength(0);
+  });
+
+  it('代提工单由企业客户账号确认，代提人（非 REPORTER）不可确认', () => {
+    const customer = availableActions('PENDING_CONFIRM', 'REPORTER', { isReporter: true }).map((t) => t.action);
+    const onBehalfAgent = availableActions('PENDING_CONFIRM', 'AGENT', { isReporter: false }).map((t) => t.action);
+    expect(customer.sort()).toEqual(['CONFIRM', 'REJECT']);
+    expect(onBehalfAgent).not.toContain('CONFIRM');
+  });
+
+  it('工单类型常量包含客户工单与内部工单', () => {
+    expect(TICKET_TYPES).toEqual(['CUSTOMER', 'INTERNAL']);
+    expect(TICKET_TYPE_LABELS.INTERNAL).toBe('内部工单');
   });
 });

@@ -1,13 +1,27 @@
 node_modules/
 dist/
-data/
-*.log
-.env.local
-apps/api/prisma/*.db
-apps/api/prisma/*.db-journal
-apps/api/prisma/*.db-wal
-apps/api/prisma/*.db-shm
-.vite/
-coverage/
 dist-installer/
+data/
+coverage/
 .screenshots/
+.vite/
+
+# 环境变量与密钥（.env.example 作为模板保留）
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# 数据库文件
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# 日志与系统文件
+*.log
+.DS_Store
+Thumbs.db

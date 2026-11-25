@@ -8,6 +8,7 @@ import LoginPage from './pages/LoginPage';
 import ActivatePage from './pages/ActivatePage';
 import ForgotPasswordPage from './pages/ForgotPasswordPage';
 import ResetPasswordPage from './pages/ResetPasswordPage';
+import ChangePasswordPage from './pages/ChangePasswordPage';
 import TicketListPage from './pages/TicketListPage';
 import TicketCreatePage from './pages/TicketCreatePage';
 import TicketDetailPage from './pages/TicketDetailPage';
@@ -31,6 +32,9 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
     );
   }
   if (!user) return <Navigate to="/login" replace state={{ from: location.pathname }} />;
+  if (user.mustChangePassword && location.pathname !== '/change-password') {
+    return <Navigate to="/change-password" replace />;
+  }
   return <>{children}</>;
 }
 
@@ -49,6 +53,14 @@ export default function App() {
       <Route path="/activate" element={<ActivatePage />} />
       <Route path="/forgot-password" element={<ForgotPasswordPage />} />
       <Route path="/reset-password" element={<ResetPasswordPage />} />
+      <Route
+        path="/change-password"
+        element={
+          <RequireAuth>
+            <ChangePasswordPage />
+          </RequireAuth>
+        }
+      />
 
       <Route
         element={

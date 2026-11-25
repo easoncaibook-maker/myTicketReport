@@ -63,6 +63,15 @@ async function request<T = any>(path: string, options: RequestInit = {}, retry =
     } catch {
       payload = null;
     }
+    // 未完成强制改密时，后端会拦截其他接口，这里统一跳转到改密页
+    if (
+      res.status === 403 &&
+      payload?.code === 'PASSWORD_CHANGE_REQUIRED' &&
+      typeof window !== 'undefined' &&
+      !window.location.pathname.startsWith('/change-password')
+    ) {
+      window.location.assign('/change-password');
+    }
     throw new ApiError(res.status, payload);
   }
   if (res.status === 204) return undefined as T;
@@ -98,6 +107,27 @@ export const api = {
     a.click();
     URL.revokeObjectURL(url);
   },
+  /** 以当前登录态获取二进制内容（用于富文本内嵌图片预览） */
+  async blob(path: string): Promise<Blob> {
+    const url = `/api${path.replace(/^\/api/, '')}`;
+    const doFetch = async () => {
+      const headers: Record<string, string> = {};
+      if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
+      return fetch(url, { headers, credentials: 'include' });
+    };
+    let res = await doFetch();
+    if (res.status === 401) {
+      if (!refreshPromise) {
+        refreshPromise = doRefresh().finally(() => {
+          refreshPromise = null;
+        });
+      }
+      const ok = await refreshPromise;
+      if (ok) res = await doFetch();
+    }
+    if (!res.ok) throw new ApiError(res.status, null);
+    return res.blob();
+  },
 };
 
 export interface CurrentUser {
@@ -110,6 +140,7 @@ export interface CurrentUser {
   enterpriseName?: string | null;
   groupIds: string[];
   siteName?: string;
+  mustChangePassword?: boolean;
 }
 
 export async function refreshSession(): Promise<CurrentUser | null> {

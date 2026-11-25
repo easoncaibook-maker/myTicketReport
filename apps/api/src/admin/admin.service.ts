@@ -186,13 +186,52 @@ export class AdminService {
         data: { revokedAt: new Date() },
       });
     }
+
+    let roleChanged = false;
+    if (body.role !== undefined && body.role !== user.role) {
+      if (user.role === 'REPORTER' || user.enterpriseId) {
+        throw new BadRequestException('客户账号不能转为内部账号，请新建内部账号');
+      }
+      if (!['AGENT', 'OPS_LEAD', 'ADMIN'].includes(body.role)) {
+        throw new BadRequestException('仅支持在处理人 / 运维主管 / 管理员之间切换角色');
+      }
+      data.role = body.role;
+      roleChanged = true;
+    }
+
     const updated = await this.prisma.user.update({
       where: { id: userId },
       data,
       include: { enterprise: true, groupMembers: true },
     });
-    await this.audit.log(actorId, 'USER_UPDATE', 'User', userId, data);
+    const auditPayload: any = {};
+    for (const key of ['name', 'phone', 'status']) {
+      if (data[key] !== undefined) auditPayload[key] = data[key];
+    }
+    if (roleChanged) {
+      await this.audit.log(actorId, 'USER_ROLE_CHANGE', 'User', userId, {
+        from: user.role,
+        to: data.role,
+        ...auditPayload,
+      });
+    }
+    if (Object.keys(auditPayload).length) {
+      await this.audit.log(actorId, 'USER_UPDATE', 'User', userId, auditPayload);
+    }
     return publicUser(updated);
+  }
+
+  /** 管理员重置任意账号密码为默认密码，强制下次登录改密并踢掉现有会话 */
+  async resetUserPassword(actorId: string, userId: string) {
+    const target = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!target) throw new NotFoundException('用户不存在');
+    const result = await this.auth.adminResetPassword(userId);
+    await this.audit.log(actorId, 'USER_PASSWORD_RESET', 'User', userId, {
+      email: target.email,
+      forcedChange: true,
+      sessionsRevoked: true,
+    });
+    return result;
   }
 
   // ---------- 分类 ----------

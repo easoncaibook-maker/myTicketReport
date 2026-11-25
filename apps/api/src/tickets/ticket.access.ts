@@ -5,7 +5,7 @@ import { PrismaService } from '../prisma/prisma.service';
 
 export const TICKET_INCLUDE = {
   enterprise: { select: { id: true, name: true, code: true } },
-  reporter: { select: { id: true, name: true, email: true, enterpriseId: true } },
+  reporter: { select: { id: true, name: true, email: true, enterpriseId: true, role: true } },
   assignee: { select: { id: true, name: true, email: true, status: true } },
   category: { select: { id: true, name: true, defaultGroupId: true } },
   group: { select: { id: true, name: true } },

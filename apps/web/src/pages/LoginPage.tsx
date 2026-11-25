@@ -13,15 +13,17 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null);
 
   if (user) {
-    return <Navigate to={location.state?.from || '/tickets'} replace />;
+    return <Navigate to={user.mustChangePassword ? '/change-password' : location.state?.from || '/tickets'} replace />;
   }
 
   const onFinish = async (values: { email: string; password: string }) => {
     setLoading(true);
     setError(null);
     try {
-      await login(values.email.trim(), values.password);
-      navigate(location.state?.from || '/tickets', { replace: true });
+      const loggedIn = await login(values.email.trim(), values.password);
+      navigate(loggedIn.mustChangePassword ? '/change-password' : location.state?.from || '/tickets', {
+        replace: true,
+      });
     } catch (e) {
       setError(errorMessage(e));
     } finally {

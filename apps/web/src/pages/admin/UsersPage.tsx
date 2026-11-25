@@ -74,6 +74,23 @@ export default function UsersPage() {
     });
   };
 
+  const changeRole = (row: any, nextRole: string) => {
+    if (nextRole === row.role) return;
+    Modal.confirm({
+      title: '调整角色',
+      content: `确定将 ${row.name}（${row.email}）从「${ROLE_LABELS[row.role as Role]}」调整为「${ROLE_LABELS[nextRole as Role]}」吗？调整后立即生效。`,
+      onOk: async () => {
+        try {
+          await api.patch(`/admin/users/${row.id}`, { role: nextRole });
+          message.success('角色已更新');
+          refresh();
+        } catch (e) {
+          message.error(errorMessage(e));
+        }
+      },
+    });
+  };
+
   const resend = async (row: any) => {
     try {
       await api.post(`/admin/users/${row.id}/resend-invite`);
@@ -81,6 +98,27 @@ export default function UsersPage() {
     } catch (e) {
       message.error(errorMessage(e));
     }
+  };
+
+  const resetPassword = (row: any) => {
+    Modal.confirm({
+      title: '重置密码',
+      content: `确定将 ${row.name}（${row.email}）的密码重置为初始密码「Passw0rd!」吗？该账号现有会话将立即失效，下次登录必须先修改密码。`,
+      okText: '确认重置',
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        try {
+          const res = await api.post(`/admin/users/${row.id}/reset-password`);
+          Modal.success({
+            title: '密码已重置',
+            content: `初始密码：${res.defaultPassword}。请通过安全渠道告知用户，其登录后需立即修改。`,
+          });
+          refresh();
+        } catch (e) {
+          message.error(errorMessage(e));
+        }
+      },
+    });
   };
 
   const enterpriseOptions = useMemo(
@@ -136,7 +174,33 @@ export default function UsersPage() {
           columns={[
             { title: '姓名', dataIndex: 'name', width: 120 },
             { title: '邮箱', dataIndex: 'email' },
-            { title: '角色', dataIndex: 'role', width: 110, render: (v: Role) => <RoleTag role={v} /> },
+            {
+              title: '角色',
+              dataIndex: 'role',
+              width: 150,
+              render: (v: Role, r: any) => {
+                const isOpsAccount = v !== 'REPORTER' && !r.enterpriseId;
+                if (!isOpsAccount) {
+                  return (
+                    <Space size={4}>
+                      <RoleTag role={v} />
+                    </Space>
+                  );
+                }
+                return (
+                  <Select
+                    size="small"
+                    value={v}
+                    style={{ width: 120 }}
+                    onChange={(next) => changeRole(r, next)}
+                    options={(['AGENT', 'OPS_LEAD', 'ADMIN'] as Role[]).map((x) => ({
+                      value: x,
+                      label: ROLE_LABELS[x],
+                    }))}
+                  />
+                );
+              },
+            },
             {
               title: '所属企业 / 处理组',
               width: 190,
@@ -145,13 +209,18 @@ export default function UsersPage() {
             {
               title: '状态',
               dataIndex: 'status',
-              width: 100,
-              render: (v: string) => <Tag color={STATUS_COLORS[v]}>{STATUS_LABELS_LOCAL[v] ?? v}</Tag>,
+              width: 120,
+              render: (v: string, r: any) => (
+                <Space size={4} wrap>
+                  <Tag color={STATUS_COLORS[v]}>{STATUS_LABELS_LOCAL[v] ?? v}</Tag>
+                  {r.mustChangePassword && <Tag color="gold">待改密</Tag>}
+                </Space>
+              ),
             },
             { title: '创建时间', dataIndex: 'createdAt', width: 150, render: (v) => formatDate(v) },
             {
               title: '操作',
-              width: 220,
+              width: 300,
               render: (_: any, r: any) => (
                 <Space size={2} wrap>
                   {r.status === 'INVITED' && (
@@ -159,6 +228,9 @@ export default function UsersPage() {
                       重发邀请
                     </Button>
                   )}
+                  <Button type="link" size="small" onClick={() => resetPassword(r)}>
+                    重置密码
+                  </Button>
                   {r.id !== undefined && (
                     <Button
                       type="link"

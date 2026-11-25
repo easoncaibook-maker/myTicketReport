@@ -97,6 +97,11 @@ export default function ReportsPage() {
             <Statistic title="平均处理时长" value={Number(overview?.avgHandleHours ?? 0)} suffix="小时" precision={1} />
           </Card>
         </Col>
+        <Col xs={12} md={6} xl={3}>
+          <Card>
+            <Statistic title="工时合计" value={Number(overview?.totalWorkHours ?? 0)} suffix="小时" precision={1} />
+          </Card>
+        </Col>
       </Row>
 
       <Row gutter={[16, 16]}>
@@ -142,6 +147,12 @@ export default function ReportsPage() {
                 { title: '处理人', dataIndex: 'assigneeName' },
                 { title: '当前处理中', dataIndex: 'processing', width: 120 },
                 { title: '近 30 天关闭', dataIndex: 'closed30', width: 130 },
+                {
+                  title: '工时合计',
+                  dataIndex: 'workHours',
+                  width: 110,
+                  render: (v: number) => `${Number(v ?? 0).toFixed(1)} 小时`,
+                },
               ]}
             />
           </Card>

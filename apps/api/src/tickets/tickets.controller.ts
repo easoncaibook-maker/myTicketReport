@@ -10,12 +10,21 @@ import { TicketsService } from './tickets.service';
 
 const createTicketSchema = z.object({
   title: z.string().min(5, '标题至少 5 个字').max(100, '标题最多 100 个字'),
-  description: z.string().min(10, '描述至少 10 个字').max(5000, '描述最多 5000 个字'),
+  description: z.string().min(1, '请填写问题描述').max(20000, '描述内容过长'),
   categoryId: z.string().min(1, '请选择分类'),
   priority: z.enum(PRIORITIES),
+  /** 仅运维侧账号生效：INTERNAL=内部工单，CUSTOMER/缺省=代客户提单 */
+  ticketType: z.enum(['CUSTOMER', 'INTERNAL']).optional(),
+  /** 代客户提单时必填 */
+  enterpriseId: z.string().min(1).optional().nullable(),
 });
 
-const updateTicketSchema = createTicketSchema.partial();
+const updateTicketSchema = z.object({
+  title: z.string().min(5, '标题至少 5 个字').max(100, '标题最多 100 个字').optional(),
+  description: z.string().min(1, '请填写问题描述').max(20000, '描述内容过长').optional(),
+  categoryId: z.string().min(1, '请选择分类').optional(),
+  priority: z.enum(PRIORITIES).optional(),
+});
 const assignSchema = z.object({
   groupId: z.string().min(1, '请选择处理组'),
   assigneeId: z.string().optional().nullable(),
@@ -29,8 +38,16 @@ const transferSchema = z.object({
 const reasonSchema = z.object({ reason: z.string().min(2, '请填写原因').max(500) });
 const optionalReasonSchema = z.object({ reason: z.string().max(500).optional() });
 const resolveSchema = z.object({ resolution: z.string().min(5, '请填写处理结果').max(2000) });
+const workHoursSchema = z.object({
+  workHours: z
+    .number({ invalid_type_error: '请输入工时' })
+    .min(0, '工时不能小于 0')
+    .max(999.9, '工时不能超过 999.9')
+    .refine((v) => Math.abs(v * 10 - Math.round(v * 10)) < 1e-6, '工时最多保留一位小数')
+    .nullable(),
+});
 const commentSchema = z.object({
-  content: z.string().min(1, '请输入内容').max(5000, '内容不超过 5000 字'),
+  content: z.string().min(1, '请输入内容').max(20000, '内容过长'),
   visibility: z.enum(VISIBILITIES).optional(),
   attachmentIds: z.array(z.string()).optional(),
 });
@@ -107,6 +124,11 @@ export class TicketsController {
   @Post(':id/cancel')
   cancel(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body(new ZodPipe(optionalReasonSchema)) body: any) {
     return this.service.cancel(user, id, body);
+  }
+
+  @Patch(':id/work-hours')
+  updateWorkHours(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body(new ZodPipe(workHoursSchema)) body: any) {
+    return this.service.updateWorkHours(user, id, body.workHours);
   }
 
   @Post(':id/comments')

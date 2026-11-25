@@ -10,11 +10,17 @@ import {
   ROLE_LABELS,
   STATUS_LABELS,
   TicketAction,
+  TicketStatus,
+  WORK_HOURS_ROLES,
+  WORK_HOURS_STATUSES,
   availableActions,
+  canEditWorkHours,
   findTransition,
 } from '@ticketreport/shared';
 import type { Response } from 'express';
+import { AuditService } from '../audit/audit.module';
 import { AuthUser } from '../common/decorators';
+import { normalizeRichText } from '../common/rich-text';
 import { ticketScope } from '../common/scope';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -32,6 +38,7 @@ export class TicketsService {
     private readonly settings: SettingsService,
     private readonly config: ConfigService,
     private readonly attachments: AttachmentsService,
+    private readonly audit: AuditService,
   ) {}
 
   private link(ticketId: string) {
@@ -42,6 +49,19 @@ export class TicketsService {
     const def = findTransition(action);
     if (!def) throw new BadRequestException('不支持的操作');
     if (!def.roles.includes(role)) throw new ForbiddenException('没有执行该操作的权限');
+    if (!def.from.includes(status as any)) {
+      throw new ConflictException({
+        code: 'TICKET_INVALID_TRANSITION',
+        message: `当前状态「${STATUS_LABELS[status as any] || status}」不允许该操作`,
+      });
+    }
+    return def;
+  }
+
+  /** 仅校验当前状态是否允许该动作（提报人身份类动作由调用方校验身份） */
+  private assertStatus(status: string, action: TicketAction) {
+    const def = findTransition(action);
+    if (!def) throw new BadRequestException('不支持的操作');
     if (!def.from.includes(status as any)) {
       throw new ConflictException({
         code: 'TICKET_INVALID_TRANSITION',
@@ -73,6 +93,21 @@ export class TicketsService {
       inApp: true,
       emailEnabled: true,
     };
+  }
+
+  /** 代客提单时通知客户企业内的客户账号 */
+  private async enterpriseRecipients(enterpriseId: string) {
+    const users = await this.prisma.user.findMany({
+      where: { enterpriseId, role: 'REPORTER', status: 'ACTIVE' },
+      select: { id: true, name: true, email: true },
+    });
+    return users.map((u) => ({
+      userId: u.id,
+      email: u.email,
+      name: u.name,
+      inApp: true,
+      emailEnabled: false,
+    }));
   }
 
   private async nextTicketNo() {
@@ -136,9 +171,17 @@ export class TicketsService {
       }),
     ]);
     const detail = ticketDetail({ ...ticket, comments, events, attachments }, user.role);
+    const isReporter =
+      ticket.ticketType === 'INTERNAL'
+        ? ticket.reporterId === user.id
+        : ticket.reporterId === user.id ||
+          (!!ticket.onBehalf && user.role === 'REPORTER' && user.enterpriseId === ticket.enterpriseId);
     return {
       ...detail,
-      availableActions: availableActions(ticket.status as any, user.role).map((t) => ({
+      availableActions: availableActions(ticket.status as any, user.role, {
+        isReporter,
+        isInternal: ticket.ticketType === 'INTERNAL',
+      }).map((t) => ({
         action: t.action,
         label: t.label,
         requiresReason: !!t.requiresReason,
@@ -149,8 +192,44 @@ export class TicketsService {
     };
   }
 
+  /** 清洗富文本描述并校验纯文本长度（10~5000 字） */
+  private cleanDescription(input: string) {
+    const rich = normalizeRichText(input);
+    if (rich.text.length < 10) throw new BadRequestException('描述至少 10 个字');
+    if (rich.text.length > 5000) throw new BadRequestException('描述最多 5000 个字');
+    return rich;
+  }
+
+  /** 清洗富文本评论并校验纯文本长度（1~5000 字） */
+  private cleanComment(input: string) {
+    const rich = normalizeRichText(input);
+    if (rich.text.length < 1) throw new BadRequestException('请输入内容');
+    if (rich.text.length > 5000) throw new BadRequestException('内容不超过 5000 字');
+    return rich;
+  }
+
   async create(user: AuthUser, body: any) {
-    if (user.role !== 'REPORTER') throw new ForbiddenException('仅客户员工可提交工单');
+    const isOpsUser = ['AGENT', 'OPS_LEAD', 'ADMIN'].includes(user.role);
+    let ticketType: 'CUSTOMER' | 'INTERNAL' = 'CUSTOMER';
+    let enterpriseId: string | null = user.enterpriseId ?? null;
+    let onBehalf = false;
+
+    if (!isOpsUser) {
+      if (!enterpriseId) throw new ForbiddenException('当前账号未关联客户企业');
+      if (body.ticketType === 'INTERNAL') throw new ForbiddenException('客户账号不能提交内部工单');
+    } else if (body.ticketType === 'INTERNAL') {
+      ticketType = 'INTERNAL';
+      enterpriseId = null;
+    } else {
+      if (!body.enterpriseId) throw new BadRequestException('请选择代提报的客户企业');
+      const enterprise = await this.prisma.enterprise.findFirst({
+        where: { id: body.enterpriseId, status: 'ACTIVE' },
+      });
+      if (!enterprise) throw new BadRequestException('客户企业不存在或已停用');
+      enterpriseId = enterprise.id;
+      onBehalf = true;
+    }
+
     const category = await this.prisma.category.findFirst({
       where: { id: body.categoryId, status: 'ACTIVE' },
       include: { defaultGroup: true },
@@ -158,14 +237,17 @@ export class TicketsService {
     if (!category) throw new BadRequestException('分类不存在或已停用');
     if (category.defaultGroup.status !== 'ACTIVE') throw new BadRequestException('该分类的默认处理组已停用');
     const ticketNo = await this.nextTicketNo();
+    const description = this.cleanDescription(body.description);
     const ticket = await this.prisma.$transaction(async (tx) => {
       const created = await tx.ticket.create({
         data: {
           ticketNo,
-          enterpriseId: user.enterpriseId as string,
+          ticketType,
+          enterpriseId,
+          onBehalf,
           reporterId: user.id,
           title: body.title,
-          description: body.description,
+          description: description.html,
           categoryId: category.id,
           priority: body.priority,
           groupId: category.defaultGroupId,
@@ -181,34 +263,48 @@ export class TicketsService {
           action: 'CREATE',
           toValue: 'PENDING',
           visibility: 'PUBLIC',
+          reason: ticketType === 'INTERNAL' ? '提交内部工单' : onBehalf ? '代客户提交工单' : undefined,
         },
       });
       return created;
     });
 
     const groupRecipients = await this.groupRecipients(ticket.groupId);
+    const recipients = [this.reporterRecipient(ticket), ...groupRecipients];
+    if (onBehalf && enterpriseId) {
+      recipients.push(...(await this.enterpriseRecipients(enterpriseId)));
+    }
+    const bodyText =
+      ticketType === 'INTERNAL'
+        ? `${ticket.reporter.name} 提交了内部工单「${ticket.title}」`
+        : onBehalf
+          ? `${ticket.reporter.name} 代客户提交了工单「${ticket.title}」`
+          : `${ticket.reporter.name} 提交了工单「${ticket.title}」`;
     await this.notifications.notify({
       type: 'TICKET_CREATED',
       title: `新工单 ${ticket.ticketNo}`,
-      body: `${ticket.reporter.name} 提交了工单「${ticket.title}」`,
+      body: bodyText,
       ticketId: ticket.id,
-      recipients: [this.reporterRecipient(ticket), ...groupRecipients],
-      email: {
-        template: 'ticketCreated',
-        data: {
-          ticketNo: ticket.ticketNo,
-          title: ticket.title,
-          groupName: ticket.group.name,
-          link: this.link(ticket.id),
-        },
-      },
+      recipients,
+      email:
+        ticketType === 'CUSTOMER'
+          ? {
+              template: 'ticketCreated',
+              data: {
+                ticketNo: ticket.ticketNo,
+                title: ticket.title,
+                groupName: ticket.group.name,
+                link: this.link(ticket.id),
+              },
+            }
+          : undefined,
     });
     return this.get(user, ticket.id);
   }
 
   async update(user: AuthUser, id: string, body: any) {
     const ticket = await this.access.findAccessible(id, user);
-    if (user.role !== 'REPORTER' || ticket.reporterId !== user.id) {
+    if (ticket.reporterId !== user.id) {
       throw new ForbiddenException('只有提报人可以编辑工单内容');
     }
     if (ticket.status !== 'PENDING') {
@@ -217,6 +313,9 @@ export class TicketsService {
     const data: any = {};
     for (const key of ['title', 'description', 'priority']) {
       if (body[key] !== undefined) data[key] = body[key];
+    }
+    if (data.description !== undefined) {
+      data.description = this.cleanDescription(data.description).html;
     }
     let groupId = ticket.groupId;
     if (body.categoryId && body.categoryId !== ticket.categoryId) {
@@ -509,12 +608,25 @@ export class TicketsService {
     return this.get(user, id);
   }
 
+  /** 客户工单的确认/反馈/重开只能由客户提报人执行；内部工单由提报人本人执行（不限角色） */
+  private assertReporterAction(user: AuthUser, ticket: any, action: 'CONFIRM' | 'REJECT' | 'REOPEN') {
+    if (ticket.ticketType === 'INTERNAL') {
+      if (ticket.reporterId !== user.id) throw new ForbiddenException('只有提报人本人可以执行该操作');
+      return;
+    }
+    if (user.role !== 'REPORTER') throw new ForbiddenException('只有客户账号可以执行该操作');
+    // 代客户提单没有客户提报人，由该企业客户账号确认
+    if (ticket.onBehalf) {
+      if (user.enterpriseId !== ticket.enterpriseId) throw new ForbiddenException('只有该企业客户可以执行该操作');
+      return;
+    }
+    if (ticket.reporterId !== user.id) throw new ForbiddenException('只有客户提报人本人可以执行该操作');
+  }
+
   async confirm(user: AuthUser, id: string) {
     const ticket = await this.access.findAccessible(id, user);
-    if (user.role !== 'REPORTER' || ticket.reporterId !== user.id) {
-      throw new ForbiddenException('只有提报人本人可以确认关闭');
-    }
-    this.assertTransition(ticket.status, 'CONFIRM', user.role);
+    this.assertReporterAction(user, ticket, 'CONFIRM');
+    this.assertStatus(ticket.status, 'CONFIRM');
     await this.prisma.$transaction(async (tx) => {
       const updated = await tx.ticket.updateMany({
         where: { id, version: ticket.version, status: 'PENDING_CONFIRM' },
@@ -554,10 +666,8 @@ export class TicketsService {
 
   async reject(user: AuthUser, id: string, body: any) {
     const ticket = await this.access.findAccessible(id, user);
-    if (user.role !== 'REPORTER' || ticket.reporterId !== user.id) {
-      throw new ForbiddenException('只有提报人本人可以反馈');
-    }
-    this.assertTransition(ticket.status, 'REJECT', user.role);
+    this.assertReporterAction(user, ticket, 'REJECT');
+    this.assertStatus(ticket.status, 'REJECT');
     await this.prisma.$transaction(async (tx) => {
       const updated = await tx.ticket.updateMany({
         where: { id, version: ticket.version, status: 'PENDING_CONFIRM' },
@@ -636,25 +746,26 @@ export class TicketsService {
       body: `工单「${ticket.title}」已被运维团队关闭：${body.reason}`,
       ticketId: id,
       recipients: [this.reporterRecipient(ticket)],
-      email: {
-        template: 'ticketClosed',
-        data: {
-          ticketNo: ticket.ticketNo,
-          title: ticket.title,
-          reason: body.reason,
-          link: this.link(id),
-        },
-      },
+      email:
+        ticket.ticketType === 'CUSTOMER'
+          ? {
+              template: 'ticketClosed',
+              data: {
+                ticketNo: ticket.ticketNo,
+                title: ticket.title,
+                reason: body.reason,
+                link: this.link(id),
+              },
+            }
+          : undefined,
     });
     return this.get(user, id);
   }
 
   async reopen(user: AuthUser, id: string) {
     const ticket = await this.access.findAccessible(id, user);
-    if (user.role !== 'REPORTER' || ticket.reporterId !== user.id) {
-      throw new ForbiddenException('只有提报人本人可以重开');
-    }
-    this.assertTransition(ticket.status, 'REOPEN', user.role);
+    this.assertReporterAction(user, ticket, 'REOPEN');
+    this.assertStatus(ticket.status, 'REOPEN');
     const windowDays = await this.settings.getNumber('reopenWindowDays');
     if (!ticket.closedAt || Date.now() - ticket.closedAt.getTime() > windowDays * 86400_000) {
       throw new ConflictException(`工单关闭超过 ${windowDays} 天，无法重开，请新建工单`);
@@ -706,10 +817,10 @@ export class TicketsService {
 
   async cancel(user: AuthUser, id: string, body: any) {
     const ticket = await this.access.findAccessible(id, user);
-    if (user.role !== 'REPORTER' || ticket.reporterId !== user.id) {
+    if (ticket.reporterId !== user.id) {
       throw new ForbiddenException('只有提报人本人可以撤回工单');
     }
-    this.assertTransition(ticket.status, 'CANCEL', user.role);
+    this.assertStatus(ticket.status, 'CANCEL');
     await this.prisma.$transaction(async (tx) => {
       const updated = await tx.ticket.updateMany({
         where: { id, version: ticket.version, status: 'PENDING' },
@@ -746,6 +857,45 @@ export class TicketsService {
     return this.get(user, id);
   }
 
+  async updateWorkHours(user: AuthUser, id: string, workHours: number | null) {
+    const ticket = await this.access.findAccessible(id, user);
+    if (!canEditWorkHours(user.role, ticket.status as TicketStatus)) {
+      if (!WORK_HOURS_ROLES.includes(user.role)) {
+        throw new ForbiddenException('没有填写处理工时的权限');
+      }
+      throw new ConflictException({
+        code: 'TICKET_WORK_HOURS_NOT_EDITABLE',
+        message: '仅处理中及之后的状态可以填写处理工时',
+      });
+    }
+    if (user.role === 'AGENT' && ticket.assigneeId !== user.id) {
+      throw new ForbiddenException('只能填写自己处理工单的工时');
+    }
+    const next = workHours === null ? null : Math.round(workHours * 10) / 10;
+    const before = ticket.workHours ?? null;
+    if (before === next) return this.get(user, id);
+    await this.prisma.$transaction(async (tx) => {
+      const updated = await tx.ticket.updateMany({
+        where: { id, version: ticket.version },
+        data: { workHours: next, version: { increment: 1 }, lastActivityAt: new Date() },
+      });
+      if (updated.count === 0) throw new ConflictException('工单已被更新，请刷新后重试');
+      await tx.ticketEvent.create({
+        data: {
+          ticketId: id,
+          actorId: user.id,
+          actorName: user.name,
+          action: 'WORK_HOURS',
+          fromValue: before === null ? null : String(before),
+          toValue: next === null ? null : String(next),
+          visibility: 'PUBLIC',
+        },
+      });
+    });
+    await this.audit.log(user.id, 'TICKET_WORK_HOURS', 'Ticket', id, { from: before, to: next });
+    return this.get(user, id);
+  }
+
   async createComment(user: AuthUser, id: string, body: any) {
     const ticket = await this.access.findAccessible(id, user);
     let visibility = body.visibility === 'INTERNAL' ? 'INTERNAL' : 'PUBLIC';
@@ -753,6 +903,7 @@ export class TicketsService {
       throw new ForbiddenException('客户不能添加内部备注');
     }
     const attachmentIds: string[] = body.attachmentIds ?? [];
+    const content = this.cleanComment(body.content);
     if (attachmentIds.length > 0) {
       const owned = await this.prisma.ticketAttachment.count({
         where: { id: { in: attachmentIds }, ticketId: id, commentId: null },
@@ -767,7 +918,7 @@ export class TicketsService {
           authorName: user.name,
           authorRole: user.role,
           visibility,
-          content: body.content,
+          content: content.html,
         },
       });
       if (attachmentIds.length > 0) {
@@ -814,7 +965,7 @@ export class TicketsService {
       await this.notifications.notify({
         type: 'TICKET_COMMENT',
         title: `工单有新回复 ${ticket.ticketNo}`,
-        body: `${user.name}：${body.content.slice(0, 100)}`,
+        body: `${user.name}：${content.text.slice(0, 100)}`,
         ticketId: id,
         recipients,
         email: {
@@ -823,7 +974,7 @@ export class TicketsService {
             ticketNo: ticket.ticketNo,
             title: ticket.title,
             actorName: user.name,
-            content: body.content,
+            content: content.text,
             link: this.link(id),
           },
         },
@@ -841,7 +992,7 @@ export class TicketsService {
             ticketNo: ticket.ticketNo,
             title: ticket.title,
             actorName: user.name,
-            content: body.content,
+            content: content.text,
             link: this.link(id),
           },
         },

@@ -33,7 +33,7 @@ export default function ResetPasswordPage() {
       <Result
         status="success"
         title="密码已重置"
-        subTitle="所有旧会话已失效，请使用新密码登录。"
+        subTitle="所有旧会话已失效。请使用新密码登录，登录后需按提示再设置一次个人密码。"
         extra={
           <Button type="primary" onClick={() => navigate('/login')}>
             去登录

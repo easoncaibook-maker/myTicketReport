@@ -12,7 +12,7 @@ import {
 } from '@ticketreport/shared';
 import { api, errorMessage } from '../lib/api';
 import { useAuth } from '../lib/auth';
-import { PriorityTag, StatusTag } from '../lib/ui';
+import { PriorityTag, StatusTag, formatHours } from '../lib/ui';
 
 const { RangePicker } = DatePicker;
 
@@ -89,7 +89,10 @@ export default function TicketListPage() {
       render: (_: any, r: any) => (
         <div>
           <div>{r.reporterName}</div>
-          <div style={{ fontSize: 12, color: '#8c8c8c' }}>{r.enterpriseName}</div>
+          <div style={{ fontSize: 12, color: '#8c8c8c' }}>
+            {r.isInternal ? '内部工单' : r.enterpriseName}
+            {r.onBehalf ? ' · 代提' : ''}
+          </div>
         </div>
       ),
     },
@@ -98,6 +101,13 @@ export default function TicketListPage() {
       dataIndex: 'assigneeName',
       width: 110,
       render: (v: string) => v || <Tag>未分配</Tag>,
+    },
+    {
+      title: '处理工时',
+      dataIndex: 'workHours',
+      width: 110,
+      align: 'right',
+      render: (v: number | null) => formatHours(v),
     },
     {
       title: '更新时间',
@@ -134,12 +144,9 @@ export default function TicketListPage() {
           <Button icon={<ReloadOutlined />} onClick={() => refetch()}>
             刷新
           </Button>
-          {user?.role === 'REPORTER' && (
-            <Button type="primary" icon={<PlusOutlined />} onClick={() => navigate('/tickets/new')}>
-              提交工单
-            </Button>
-          )}
-        </Space>
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => navigate('/tickets/new')}>
+            提交工单
+          </Button>        </Space>
       </div>
 
       <Card size="small" style={{ marginBottom: 16 }}>

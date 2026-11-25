@@ -37,6 +37,7 @@ export const ACTION_LABELS: Record<string, string> = {
   FORCE_CLOSE: '强制关闭',
   REOPEN: '重开工单',
   CANCEL: '撤回工单',
+  WORK_HOURS: '修改处理工时',
 };
 
 export function ActionLabel({ action }: { action: string }) {
@@ -63,4 +64,10 @@ export const EVENT_DOT_COLORS: Record<string, string> = {
   REOPEN: 'orange',
   CANCEL: 'gray',
   EDIT: 'gray',
+  WORK_HOURS: 'cyan',
 };
+
+export function formatHours(value?: number | null) {
+  if (value === null || value === undefined) return '-';
+  return `${Number(value).toFixed(1)} 小时`;
+}

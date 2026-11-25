@@ -1,19 +1,40 @@
-import { ROLE_LABELS, Role, STATUS_LABELS, PRIORITY_LABELS, TicketStatus, Priority } from '@ticketreport/shared';
+import {
+  ROLE_LABELS,
+  Role,
+  STATUS_LABELS,
+  PRIORITY_LABELS,
+  TICKET_TYPE_LABELS,
+  TicketStatus,
+  TicketType,
+  Priority,
+} from '@ticketreport/shared';
+import { sanitizeRichText } from '../common/rich-text';
+
+/** 历史数据可能是纯文本，统一在出口再清洗一次，确保前端拿到的 HTML 安全 */
+function safeHtml(input: unknown): string {
+  return sanitizeRichText(typeof input === 'string' ? input : '');
+}
 
 export function ticketSummary(ticket: any) {
+  const ticketType = (ticket.ticketType ?? 'CUSTOMER') as TicketType;
   return {
     id: ticket.id,
     ticketNo: ticket.ticketNo,
     title: ticket.title,
-    description: ticket.description,
+    description: safeHtml(ticket.description),
+    ticketType,
+    ticketTypeLabel: TICKET_TYPE_LABELS[ticketType] ?? ticket.ticketType,
+    isInternal: ticketType === 'INTERNAL',
+    onBehalf: !!ticket.onBehalf,
     status: ticket.status,
     statusLabel: STATUS_LABELS[ticket.status as TicketStatus] ?? ticket.status,
     priority: ticket.priority,
     priorityLabel: PRIORITY_LABELS[ticket.priority as Priority] ?? ticket.priority,
-    enterpriseId: ticket.enterpriseId,
-    enterpriseName: ticket.enterprise?.name,
+    enterpriseId: ticket.enterpriseId ?? null,
+    enterpriseName: ticket.enterprise?.name ?? null,
     reporterId: ticket.reporterId,
     reporterName: ticket.reporter?.name,
+    reporterRole: ticket.reporter?.role,
     assigneeId: ticket.assigneeId,
     assigneeName: ticket.assignee?.name ?? null,
     groupId: ticket.groupId,
@@ -21,6 +42,7 @@ export function ticketSummary(ticket: any) {
     categoryId: ticket.categoryId,
     categoryName: ticket.category?.name,
     reopenCount: ticket.reopenCount,
+    workHours: ticket.workHours ?? null,
     createdAt: ticket.createdAt,
     updatedAt: ticket.updatedAt,
     lastActivityAt: ticket.lastActivityAt,
@@ -37,7 +59,7 @@ export function commentView(comment: any) {
     authorRole: comment.authorRole,
     authorRoleLabel: ROLE_LABELS[comment.authorRole as Role] ?? comment.authorRole,
     visibility: comment.visibility,
-    content: comment.content,
+    content: safeHtml(comment.content),
     createdAt: comment.createdAt,
     deletedAt: comment.deletedAt,
     attachments: (comment.attachments ?? []).map(attachmentView),

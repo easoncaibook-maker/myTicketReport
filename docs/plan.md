@@ -2,10 +2,10 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 文档版本 | v0.2（已实施） |
+| 文档版本 | v0.3（已实施） |
 | 日期 | 2026-11-25 |
 | 关联文档 | [需求文档](./requirements.md) |
-| 说明 | 评审结论：Q1=B，其余按默认方案；已按 M0→M5 完成第一版实现，可本地与 Docker 启动 |
+| 说明 | 评审结论：Q1=B，其余按默认方案；已按 M0→M5 完成第一版实现，可本地与 Docker 启动；v0.3 增补内部工单 / 代客提单 / 运维角色调整 |
 
 ---
 
@@ -79,6 +79,12 @@ export const TRANSITIONS = [
 ```
 
 后端 `TicketStateMachine.assertCanTransition(ticket, action, actor)` 负责状态 + 角色 + 资源归属三重校验；前端根据同一份 `TRANSITIONS` + 当前用户角色渲染操作按钮。**角色不是唯一条件**（还要求本人/本组），前端只做展示，后端做最终判定。
+
+内部工单补充：
+
+- `TICKET_TYPES = ['CUSTOMER', 'INTERNAL']`；内部工单 `enterpriseId = null`，客户 scope 天然不可见；
+- 共享 `availableActions(status, role, { isReporter, isInternal })`：`CONFIRM` / `REJECT` / `REOPEN` / `CANCEL` 属于「提报人动作」，内部工单按 `isReporter` 判定，客户工单仍要求 `REPORTER` 角色且为提报人本人；
+- 服务端 `confirm` / `reject` / `reopen` 统一走 `assertReporterAction`：内部工单校验提报人本人；客户工单要求 `role === 'REPORTER'` 且为提报人本人；代客户提单由同企业客户账号执行（代提人不能代替客户确认）；`forceClose` 仍限 `OPS_LEAD` / `ADMIN`。
 
 **D4：通知适配层**
 
@@ -248,9 +254,11 @@ TicketReport/
 | POST | `/auth/logout` | 登录 | 撤销 refresh |
 | POST | `/auth/activate` | 公开（凭令牌） | 邀请链接设置密码并激活 |
 | POST | `/auth/forgot-password` | 公开 | 发送重置邮件 |
-| POST | `/auth/reset-password` | 公开（凭令牌） | 重置并失效全部会话 |
-| GET | `/auth/me` | 登录 | 当前用户、角色、企业、权限点 |
-| PATCH | `/auth/me/password` | 登录 | 修改密码 |
+| POST | `/auth/reset-password` | 公开（凭令牌） | 重置密码、置「待改密」、递增 `tokenVersion` 并失效全部会话 |
+| GET | `/auth/me` | 登录 | 当前用户、角色、企业、`mustChangePassword` |
+| PATCH | `/auth/me/password` | 登录 | 修改密码（校验原密码，成功后清除待改密标记并失效旧令牌） |
+
+> 强制改密：`AuthGuard` 发现自己加载的 `user.mustChangePassword = true` 时，仅放行 `GET /auth/me`、`PATCH /auth/me/password`、`POST /auth/logout`，其余接口统一返回 `403 { code: 'PASSWORD_CHANGE_REQUIRED' }`；同时比较 JWT 内 `ver` 与数据库 `tokenVersion`，不一致即 `401`（重置/改密后旧访问令牌立即失效）。
 
 #### 管理端
 
@@ -261,7 +269,8 @@ TicketReport/
 | GET | `/admin/enterprises/:id/users` | ADMIN | 企业员工列表 |
 | POST | `/admin/users/invite` | ADMIN | 邀请客户员工或创建运维账号 |
 | POST | `/admin/users/:id/resend-invite` | ADMIN | 重发邀请 |
-| PATCH | `/admin/users/:id` | ADMIN | 改名/改手机/禁用/启用/改角色（仅运维） |
+| POST | `/admin/users/:id/reset-password` | ADMIN | 重置为默认密码 `Passw0rd!`，置「待改密」，失效全部令牌，写 `USER_PASSWORD_RESET` 审计 |
+| PATCH | `/admin/users/:id` | ADMIN | 改名/改手机/禁用/启用/改角色（仅运维侧，写 `USER_ROLE_CHANGE` 审计，立即生效） |
 | GET/POST | `/admin/categories` · PATCH `/admin/categories/:id` | ADMIN | 分类维护 |
 | GET/POST | `/admin/groups` · PATCH `/admin/groups/:id` | ADMIN | 处理组维护 |
 | PUT | `/admin/groups/:id/members` | ADMIN | 覆盖式设置成员 |
@@ -273,21 +282,21 @@ TicketReport/
 | 方法 | 路径 | 权限 | 说明 |
 | --- | --- | --- | --- |
 | GET | `/tickets` | 登录 | 按角色自动限定范围；筛选、分页 |
-| POST | `/tickets` | REPORTER | 创建（自动落组、发通知） |
+| POST | `/tickets` | 登录 | 创建（客户提单 / 内部工单 / 代客户提单；描述为富文本 HTML，服务端清洗并按其纯文本校验字数；自动落组、发通知） |
 | GET | `/tickets/:id` | 登录 | 详情（含客户侧过滤后的时间线与评论） |
-| PATCH | `/tickets/:id` | REPORTER(本人, PENDING) | 编辑主信息 |
+| PATCH | `/tickets/:id` | 提报人本人（PENDING） | 编辑主信息（不可改工单类型 / 企业归属）；描述同样按富文本清洗与纯文本字数校验，用于提单后回填图片附件引用 |
 | POST | `/tickets/:id/claim` | AGENT | 认领 |
 | POST | `/tickets/:id/assign` | OPS_LEAD/ADMIN | `{ groupId, assigneeId?, reason }` |
 | POST | `/tickets/:id/transfer` | AGENT(本人)/OPS_LEAD/ADMIN | `{ groupId, assigneeId?, reason }` |
 | POST | `/tickets/:id/release` | OPS_LEAD/ADMIN | 撤回认领 |
 | POST | `/tickets/:id/resolve` | 当前处理人/主管/管理员 | `{ resolution, attachmentIds? }` |
-| POST | `/tickets/:id/confirm` | REPORTER(提报人) | 确认关闭 |
-| POST | `/tickets/:id/reject` | REPORTER(提报人) | `{ reason }` 反馈未解决 |
+| POST | `/tickets/:id/confirm` | 提报人本人（客户工单需 REPORTER） | 确认关闭 |
+| POST | `/tickets/:id/reject` | 提报人本人（客户工单需 REPORTER） | `{ reason }` 反馈未解决 |
 | POST | `/tickets/:id/force-close` | OPS_LEAD/ADMIN | `{ reason }` |
-| POST | `/tickets/:id/reopen` | REPORTER(提报人) | 校验时限 |
-| POST | `/tickets/:id/cancel` | REPORTER(提报人, PENDING) | `{ reason? }` 撤回，终态「已取消」 |
+| POST | `/tickets/:id/reopen` | 提报人本人（客户工单需 REPORTER） | 校验时限 |
+| POST | `/tickets/:id/cancel` | 提报人本人（PENDING） | `{ reason? }` 撤回，终态「已取消」 |
 | GET | `/tickets/:id/events` | 登录 | 时间线（客户侧过滤） |
-| POST | `/tickets/:id/comments` | 登录 | `{ content, visibility, attachmentIds? }` |
+| POST | `/tickets/:id/comments` | 登录 | `{ content, visibility, attachmentIds? }`；`content` 为富文本 HTML，服务端清洗后入库，通知/邮件使用纯文本降级 |
 | DELETE | `/comments/:id` | 作者（10 分钟内） | 撤回 |
 | POST | `/tickets/:id/attachments` | 登录 | multipart 上传 |
 | GET | `/attachments/:id/download` | 登录（边界校验） | 流式下载 |
@@ -308,8 +317,8 @@ TicketReport/
 1. **认证守卫**：全局 `JwtAuthGuard`，`@Public()` 放行登录/激活/重置。
 2. **角色守卫**：`@Roles(...)` 元数据 + `RolesGuard`；方法级覆盖类级。
 3. **租户范围**：`TicketsService` 不暴露无过滤的查询，统一经 `buildTicketScope(user)`：
-   - `REPORTER` → `{ enterpriseId: user.enterpriseId }`
-   - `AGENT` → `{ OR: [{ groupId: { in: userGroupIds } }, { assigneeId: user.id }] }`
+   - `REPORTER` → `{ enterpriseId: user.enterpriseId }`（内部工单 `enterpriseId = null` 天然不可见）
+   - `AGENT` → `{ OR: [{ groupId: { in: userGroupIds } }, { assigneeId: user.id }, { events: { some: { actorId: user.id } } }] }`
    - `OPS_LEAD` / `ADMIN` → `{}`（全部）
 4. **单资源校验**：`TicketAccessService.assertCanRead/assertCanOperate`，客户侧不匹配企业时抛 `NotFoundException`（404），避免探测。
 5. **序列化过滤**：`toTicketDetail(ticket, viewer)` 中根据 `viewer.role` 剔除 `INTERNAL` 评论、内部事件字段、`assignee` 邮箱等；过滤在服务端返回前完成。
@@ -343,6 +352,15 @@ await prisma.$transaction(async (tx) => {
 - 下载：校验登录 → 校验工单可见性 → `res.sendFile` 绝对路径（路径由入库的 `stored_path` 拼接并做 `path.resolve` 前缀校验，防目录穿越）；
 - Nginx 不直接映射 uploads 目录。
 
+### 4.6 富文本与内嵌图片
+
+- **存储**：`Ticket.description`、`TicketComment.content` 存清洗后的 HTML；`apps/api/src/common/rich-text.ts` 用 `sanitize-html` 白名单（`p/br/strong/b/em/i/u/s/ul/ol/li/h1-h4/blockquote/code/pre/a/img/hr`），链接只留 `href/rel` 并强制补 `rel="noopener noreferrer"`，图片只留 `src/alt/title/width/height/data-attachment-id/data-pending-image`，协议仅 `http/https/mailto`；无有效来源（非 `http(s)://`、非附件下载地址且无占位标记）的 `img` 直接丢弃。历史纯文本数据在读取出口 `ticket.mapper.ts` 再清洗一次。
+- **长度**：zod 仅限制原始字符串 ≤20000；服务层用 `richTextToPlainText` 计算纯文本长度（描述 10–5000、评论 1–5000），避免 HTML 标签撑大内容。
+- **评论与通知**：`ticketComment` 等邮件模板使用清洗后的纯文本 `content.text`（保留段落换行），HTML 模板对文本做 `escapeHtml`，纯文本客户端得到合理降级。
+- **内嵌图片**：粘贴/上传的图片一律走 `/tickets/:id/attachments` 存为工单附件，正文写 `<img src="/api/attachments/:id/download" data-attachment-id=":id">`；下载接口沿用现有登录态 + 工单可见性校验（客户只能看本企业工单附件）。前端 `api.blob()` 带 access token 拉取后转 objectURL 展示，避免 token 过期或公开直链。
+- **提单时序**：工单尚不存在时，正文图片先写 `<img data-pending-image="N">` 占位；`POST /tickets` 成功后按序上传占位图片，再用 `PATCH /tickets/:id` 回填真实 `src` 与 `data-attachment-id`，失败的图片提示用户。
+- **前端组件**：`RichTextEditor`（Tiptap v3 + StarterKit + Image）负责编辑与 `paste/drop` 图片拦截；`RichTextView` 负责只读渲染并水合附件图片；样式沿用 AntD 表单风格。
+
 ---
 
 ## 5. 前端设计
@@ -354,8 +372,9 @@ await prisma.$transaction(async (tx) => {
 | `/login` | 登录 | 公开 |
 | `/activate?token=` | 设置密码激活 | 公开 |
 | `/forgot-password` · `/reset-password?token=` | 找回/重置 | 公开 |
+| `/change-password` | 修改密码（首次登录强制改密复用此页） | 登录 |
 | `/tickets` | 工单列表（客户/运维两种视图形态） | 登录 |
-| `/tickets/new` | 提交工单 | REPORTER |
+| `/tickets/new` | 提交工单（运维侧增加「内部工单 / 代客户提单 + 企业选择」） | 登录 |
 | `/tickets/:id` | 工单详情（时间线 + 评论区 + 操作区） | 登录 |
 | `/notifications` | 消息中心 | 登录 |
 | `/reports` | 基础报表 | 登录（数据范围受限） |
@@ -370,6 +389,7 @@ await prisma.$transaction(async (tx) => {
 - **内部备注**：编辑框顶部 Tab 切换「回复客户 / 内部备注」，内部备注用黄色底 + `仅内部可见` 标签；
 - **状态时间线**：客户侧与运维侧使用同一组件，数据源为服务端已过滤的 `events`；
 - **未读提醒**：`useUnreadCount` 每 30s 轮询（第一阶段不引入 WebSocket），页面标题同步未读数；
+- **强制改密**：登录响应 `user.mustChangePassword` 为真时直接进入 `/change-password`；`RequireAuth` 与 `apiClient` 在收到 403 `PASSWORD_CHANGE_REQUIRED` 时统一跳转该页，改密成功后清理登录态并要求用新密码重新登录；
 - **表单校验**：`packages/shared` 的 zod schema，前端即时提示、后端强校验；
 - **列表**：服务端分页 + URL 同步筛选条件（可分享/刷新保持）。
 
@@ -378,6 +398,20 @@ await prisma.$transaction(async (tx) => {
 - `apiClient`：fetch 封装，自动附带 access token；401 时用 refresh 换新 token 并重放一次请求，失败则跳登录；
 - TanStack Query key 规划：`['tickets', filters]`、`['ticket', id]`、`['notifications', filters]`、`['unread-count']`；写操作成功后在 `onSuccess` 精准失效；
 - 不在前端做权限判断的「唯一防线」，所有隐藏仅用于体验。
+
+### 5.4 富文本编辑与图片
+
+- `apps/web/src/components/RichTextEditor.tsx`：Tiptap v3（`StarterKit` + 自定义 `AttachmentImage`），工具栏覆盖加粗/斜体/下划线/删除线/标题/列表/引用/代码/链接/撤销重做；`handlePaste` / `handleDrop` 拦截图片文件，调用 `uploadImage(file)` 后插入预览；
+- `apps/web/src/components/RichTextView.tsx`：`dangerouslySetInnerHTML` 渲染服务端已清洗的 HTML，并 `hydrateAttachmentImages` 按 `data-attachment-id` 用 `api.blob()` 拉取图片替换为 objectURL，组件卸载时释放；
+- 提单页与详情页（编辑弹窗、评论框）统一使用该编辑器；表单校验按 `richTextToPlainText` 计算纯文本长度，与服务端一致；
+- `apps/web/src/lib/rich-text.ts` 负责编辑态 HTML 归一化：`data-attachment-id` 强制使用附件下载地址；无来源的 `blob:` 预览在提交前去掉。
+
+### 5.5 开发态共享包解析（白屏修复）
+
+- **现象**：提交工单后页面空白，从列表点开工单详情同样白屏；列表页正常。
+- **根因**：`apps/web/node_modules/@ticketreport/shared` 是构建产物副本，Vite 预构建缓存 `node_modules/.vite/deps/@ticketreport_shared.js` 在共享包新增导出（`canEditWorkHours`）后未失效，详情页调用到 `undefined` 抛 `TypeError`，React 渲染异常导致整棵组件树卸载，只剩空白页；列表页未使用该导出所以不受影响。
+- **修复**：`apps/web/vite.config.ts` 增加 `resolve.alias`，把 `@ticketreport/shared` 直接指向 `packages/shared/src/index.ts`，并用 `server.fs.allow` 放开仓库根目录；开发态从此读取源码，不再依赖 node_modules 副本与预构建缓存，新增共享导出即时生效。生产构建仍走构建产物。
+- **排查结论**：全站仅 `TicketDetailPage` 使用 `canEditWorkHours`，其余页面只使用未变化的枚举与状态机函数，无第二处同类崩溃。
 
 ---
 
@@ -403,6 +437,7 @@ await prisma.$transaction(async (tx) => {
 | M1-1 企业 CRUD 与停用 | enterprises 模块、管理页 | 对应 AC-ORG-01/02/04 |
 | M1-2 邀请与激活（令牌、邮件模板） | users 模块、auth activate | 邀请邮件可查（outbox），激活可登录 |
 | M1-3 登录/刷新/登出、找回与重置密码 | auth 模块、登录/重置页 | AC-AUTH-01/02/03 |
+| M1-3a 密码重置与强制改密 | `POST /admin/users/:id/reset-password`、`AuthGuard` 强制改密拦截、`tokenVersion` 令牌失效、`/change-password` 页面、账号管理「重置密码」按钮 | AC-AUTH-04/05/06/07 |
 | M1-4 处理组、分类维护 | groups/categories 模块与页面 | 分类必须绑定启用状态的组 |
 | M1-5 租户范围与访问校验基建 | `buildTicketScope`、`TicketAccessService`、`RolesGuard` | 单元测试覆盖各角色 scope |
 | M1-6 隔离测试骨架 | `test/isolation.e2e-spec.ts` | 至少 4 条越权用例先跑通 |
@@ -449,6 +484,17 @@ await prisma.$transaction(async (tx) => {
 | M5-5 README（部署、备份、SMTP 配置、常见问题） | `README.md` | 新机器照文档可完成部署 |
 | M5-6 安全与依赖检查 | 检查报告 | 无 high/critical，核心用例通过 |
 
+### M6 内部工单、代客提单与运维角色调整（M，v0.3 增补）
+
+| 任务 | 产出 | 完成标准 |
+| --- | --- | --- |
+| M6-1 数据模型扩展 | `ticket.ticket_type`（默认 `CUSTOMER`）、`ticket.enterprise_id` 可空、`ticket.on_behalf` | 开发库 `db:push` 平滑升级，历史工单自动为客户工单（AC-FLOW-11） |
+| M6-2 提单归属 | `POST /tickets` 支持 `ticketType` / `enterpriseId`；运维侧内部工单与代客提单分支 | 客户账号提交内部工单被拒；代提单未选企业返回 400（AC-FLOW-12/13） |
+| M6-3 内部工单流转 | `availableActions` 上下文 + 服务端 `assertReporterAction`；强制关闭留痕 | 提报人本人确认；主管 / 管理员强制关闭并写事件与通知 |
+| M6-4 代客提单展示与通知 | 详情 / 列表「内部工单」「代提」标识；企业客户纳入站内通知 | 企业 A 可见、企业 B 不可见；提报人显示为代提人 |
+| M6-5 运维角色调整 | `PATCH /admin/users/:id` 支持 `role`；客户账号转换拦截；`USER_ROLE_CHANGE` 审计 | 升降级后下一次请求权限立即变化（AC-ORG-05/06） |
+| M6-6 前端适配 | 提交页归属选择、详情动作上下文、账号管理角色下拉 | 处理人 / 主管 / 管理员菜单与按钮正确 |
+
 ### 后续（第二阶段，不在本次实施）
 
 企业微信渠道实现、SLA 与超时提醒、满意度评价、知识库、分派规则引擎与值班表、报表增强与导出。
@@ -474,7 +520,10 @@ flowchart LR
 | --- | --- | --- | --- |
 | 单元 | 状态机、权限 scope、序列化过滤、模板渲染、编号生成 | Vitest | 全部合法/非法流转组合；各角色 scope 断言 |
 | 接口集成 | 认证、工单流转、评论、附件、通知、报表 | Supertest + 测试库（SQLite 内存/临时文件） | 主流程 + 并发认领 + 越权 404 |
-| 隔离专项 | 跨企业读写、附件直链、报表、通知 | Supertest | 12 条越权路径矩阵 |
+| 隔离专项 | 跨企业读写、附件直链、报表、通知、内部工单、代客提单 | Supertest | 12 条越权路径矩阵 + 内部工单客户不可见 + 代提企业隔离 |
+| 角色调整 | 运维侧升降级、客户账号转换拦截、审计 | Supertest | AGENT↔OPS_LEAD↔ADMIN 权限即时变化；`USER_ROLE_CHANGE` 落库 |
+| 密码重置 | 管理员重置、邮件链接重置、强制改密拦截、令牌失效、待激活账号重置 | Vitest（白名单单测）+ 接口脚本 | 旧访问/刷新令牌立即失效；未改密访问业务接口 403 `PASSWORD_CHANGE_REQUIRED`；改密后恢复；`USER_PASSWORD_RESET` 落库 |
+| 富文本 | HTML 白名单清洗、纯文本降级、内嵌图片附件与权限、字数校验、白屏回归 | Vitest + 接口脚本 + 浏览器 | 脚本/事件属性/`javascript:` 被清除；排版与附件图片保留；描述/评论按纯文本校验长度；跨企业下载 404；邮件正文为纯文本；详情页真实浏览器可正常渲染 |
 | E2E | 4 个角色的完整闭环 | Playwright | 见 M5-1 |
 | 手工验收 | 邮件实际投递、Docker 部署、PG 切换 | 清单 | 对照 requirements.md 第 10 章逐条勾选 |
 
