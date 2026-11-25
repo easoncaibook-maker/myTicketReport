@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link as RouterLink, useNavigate, useParams } from 'react-router-dom';
 import {
   Alert,
   Button,
@@ -21,7 +21,17 @@ import {
   Upload,
   message,
 } from 'antd';
-import { ArrowLeftOutlined, DownloadOutlined, PaperClipOutlined, SendOutlined } from '@ant-design/icons';
+import {
+  ArrowLeftOutlined,
+  DownloadOutlined,
+  LinkOutlined,
+  PaperClipOutlined,
+  PlusOutlined,
+  SendOutlined,
+  StarFilled,
+  StarOutlined,
+  ThunderboltOutlined,
+} from '@ant-design/icons';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   PRIORITIES,
@@ -57,6 +67,11 @@ export default function TicketDetailPage() {
   const [editForm] = Form.useForm();
   const [workHoursOpen, setWorkHoursOpen] = useState(false);
   const [workHoursForm] = Form.useForm();
+  const [claiming, setClaiming] = useState(false);
+  const [relationOpen, setRelationOpen] = useState(false);
+  const [relationKeyword, setRelationKeyword] = useState('');
+  const [relationTarget, setRelationTarget] = useState<string | undefined>();
+  const [relationBusy, setRelationBusy] = useState(false);
 
   const { data: ticket, isLoading, error } = useQuery({
     queryKey: ['ticket', id],
@@ -80,6 +95,12 @@ export default function TicketDetailPage() {
     enabled: !!selectedGroupId && user?.role !== 'REPORTER',
   });
 
+  const { data: relationCandidates } = useQuery({
+    queryKey: ['relation-candidates', relationKeyword],
+    queryFn: () => api.get(`/tickets?pageSize=20&keyword=${encodeURIComponent(relationKeyword)}`),
+    enabled: relationOpen,
+  });
+
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ['ticket', id] });
     queryClient.invalidateQueries({ queryKey: ['tickets'] });
@@ -98,13 +119,87 @@ export default function TicketDetailPage() {
     }).filter((def) => {
       if (['CONFIRM', 'REJECT', 'REOPEN'].includes(def.action)) return isReporter;
       if (def.action === 'CANCEL') return ticket.reporterId === user.id;
-      if (def.action === 'CLAIM') return user.role === 'AGENT' && user.groupIds?.includes(ticket.groupId);
-      if (def.action === 'RESOLVE' || def.action === 'TRANSFER') {
+      if (def.action === 'CLAIM') return false; // 领取由页头独立按钮承接
+      if (def.action === 'RESOLVE' || def.action === 'TRANSFER' || def.action === 'CLOSE') {
         return user.role !== 'AGENT' || ticket.assigneeId === user.id;
       }
       return true;
     });
   }, [ticket, user]);
+
+  /** 运维侧账号均可领取尚未指派、未被认领的工单（不限原处理组） */
+  const canClaim = useMemo(() => {
+    if (!ticket || !user) return false;
+    return user.role !== 'REPORTER' && ticket.status === 'PENDING' && !ticket.assigneeId;
+  }, [ticket, user]);
+
+  /** 领取人不在原处理组时提示跨组领取 */
+  const isCrossGroupClaim = useMemo(() => {
+    if (!canClaim || !ticket) return false;
+    return !!ticket.groupId && !user?.groupIds?.includes(ticket.groupId);
+  }, [canClaim, ticket, user]);
+
+  const claimTicket = async () => {
+    setClaiming(true);
+    try {
+      await api.post(`/tickets/${id}/claim`);
+      message.success('领取成功，工单已进入处理中');
+      invalidate();
+    } catch (e) {
+      message.error(errorMessage(e));
+    } finally {
+      setClaiming(false);
+    }
+  };
+
+  const toggleFavorite = async () => {
+    if (!ticket) return;
+    try {
+      if (ticket.favorited) await api.del(`/tickets/${id}/favorite`);
+      else await api.post(`/tickets/${id}/favorite`);
+      invalidate();
+    } catch (e) {
+      message.error(errorMessage(e));
+    }
+  };
+
+  const addRelation = async () => {
+    if (!relationTarget) {
+      message.warning('请选择要关联的工单');
+      return;
+    }
+    setRelationBusy(true);
+    try {
+      await api.post(`/tickets/${id}/relations`, { relatedTicketId: relationTarget });
+      message.success('已添加关联');
+      setRelationOpen(false);
+      setRelationTarget(undefined);
+      setRelationKeyword('');
+      invalidate();
+    } catch (e) {
+      message.error(errorMessage(e));
+    } finally {
+      setRelationBusy(false);
+    }
+  };
+
+  const removeRelation = async (relationId: string) => {
+    try {
+      await api.del(`/tickets/${id}/relations/${relationId}`);
+      message.success('已解除关联');
+      invalidate();
+    } catch (e) {
+      message.error(errorMessage(e));
+    }
+  };
+
+  /** 可关联候选：排除自身与已关联工单（列表接口已按当前用户可见范围过滤） */
+  const relationOptions = useMemo(() => {
+    const linked = new Set((ticket?.relations ?? []).map((r: any) => r.ticket.id));
+    return (relationCandidates?.items ?? [])
+      .filter((t: any) => t.id !== id && !linked.has(t.id))
+      .map((t: any) => ({ value: t.id, label: `${t.ticketNo} ${t.title}` }));
+  }, [relationCandidates, ticket, id]);
 
   const canEditHours = useMemo(() => {
     if (!ticket || !user) return false;
@@ -134,6 +229,7 @@ export default function TicketDetailPage() {
       }
       if (['RESOLVE'].includes(actionDef.action)) body.resolution = values.resolution;
       if (['REJECT', 'FORCE_CLOSE'].includes(actionDef.action)) body.reason = values.reason;
+      if (actionDef.action === 'CLOSE') body.reason = values.reason || undefined;
       if (actionDef.action === 'CANCEL') body.reason = values.reason;
 
       await api.post(`/tickets/${id}/${path}`, body);
@@ -259,6 +355,17 @@ export default function TicketDetailPage() {
             <h2 style={{ margin: 0, fontSize: 20 }}>{ticket.title}</h2>
           </div>
           <Space wrap>
+            <Button
+              icon={ticket.favorited ? <StarFilled style={{ color: '#faad14' }} /> : <StarOutlined />}
+              onClick={toggleFavorite}
+            >
+              {ticket.favorited ? '已收藏' : '收藏'}
+            </Button>
+            {canClaim && (
+              <Button type="primary" icon={<ThunderboltOutlined />} loading={claiming} onClick={claimTicket}>
+                领取工单
+              </Button>
+            )}
             {actions.map((def) => (
               <Button
                 key={def.action}
@@ -287,6 +394,18 @@ export default function TicketDetailPage() {
           </Space>
         </div>
 
+        {canClaim && (
+          <Alert
+            type="success"
+            showIcon
+            style={{ marginTop: 16 }}
+            message={
+              isCrossGroupClaim
+                ? `该工单尚未被认领，你可以跨组领取（原处理组：${ticket.groupName || '未分组'}），领取记录会写入时间线。`
+                : '该工单尚未被认领，可直接领取后开始处理。'
+            }
+          />
+        )}
         {ticket.status === 'CANCELLED' && (
           <Alert
             type="info"
@@ -311,6 +430,7 @@ export default function TicketDetailPage() {
           <Descriptions.Item label="创建时间">{formatDate(ticket.createdAt)}</Descriptions.Item>
           <Descriptions.Item label="更新时间">{formatDate(ticket.lastActivityAt)}</Descriptions.Item>
           {ticket.closedAt && <Descriptions.Item label="关闭时间">{formatDate(ticket.closedAt)}</Descriptions.Item>}
+          {ticket.closedAt && <Descriptions.Item label="关闭来源">{ticket.closeSourceLabel || '-'}</Descriptions.Item>}
           {ticket.cancelledAt && <Descriptions.Item label="撤回时间">{formatDate(ticket.cancelledAt)}</Descriptions.Item>}
           <Descriptions.Item label="重开次数">{ticket.reopenCount ?? 0}</Descriptions.Item>
           <Descriptions.Item label="处理工时">
@@ -362,6 +482,48 @@ export default function TicketDetailPage() {
               ))}
             </Space>
           </>
+        )}
+      </Card>
+
+      <Card
+        title={
+          <Space>
+            <LinkOutlined />
+            关联工单（{ticket.relations?.length ?? 0}）
+          </Space>
+        }
+        extra={
+          <Button type="link" icon={<PlusOutlined />} onClick={() => setRelationOpen(true)}>
+            添加关联
+          </Button>
+        }
+        style={{ marginBottom: 16 }}
+      >
+        {ticket.relations?.length ? (
+          <List
+            size="small"
+            dataSource={ticket.relations}
+            renderItem={(r: any) => (
+              <List.Item
+                actions={[
+                  <Button key="remove" type="link" danger size="small" onClick={() => removeRelation(r.relationId)}>
+                    解除
+                  </Button>,
+                ]}
+              >
+                <Space wrap>
+                  <RouterLink to={`/tickets/${r.ticket.id}`} className="mono">
+                    {r.ticket.ticketNo}
+                  </RouterLink>
+                  <RouterLink to={`/tickets/${r.ticket.id}`}>{r.ticket.title}</RouterLink>
+                  <StatusTag status={r.ticket.status} />
+                  <span style={{ color: '#8c8c8c' }}>{r.ticket.reporterName}</span>
+                </Space>
+              </List.Item>
+            )}
+          />
+        ) : (
+          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无关联工单" />
         )}
       </Card>
 
@@ -539,6 +701,19 @@ export default function TicketDetailPage() {
               </Form.Item>
             </>
           )}
+          {actionDef?.action === 'CLOSE' && (
+            <>
+              <Alert
+                type="info"
+                showIcon
+                style={{ marginBottom: 12 }}
+                message="关闭后工单将直接结束，客户会收到关闭通知；客户仍可在允许的时间内重开。"
+              />
+              <Form.Item name="reason" label="关闭说明（可选）">
+                <Input.TextArea rows={3} placeholder="例如：客户电话确认问题已解决" />
+              </Form.Item>
+            </>
+          )}
           {['CONFIRM', 'REOPEN', 'CLAIM', 'RELEASE'].includes(actionDef?.action ?? '') && (
             <div style={{ color: '#595959' }}>
               {actionDef?.action === 'CONFIRM' && '确认问题已解决后，工单将关闭。'}
@@ -548,6 +723,35 @@ export default function TicketDetailPage() {
             </div>
           )}
         </Form>
+      </Modal>
+
+      <Modal
+        open={relationOpen}
+        title="添加关联工单"
+        onCancel={() => {
+          setRelationOpen(false);
+          setRelationTarget(undefined);
+        }}
+        onOk={addRelation}
+        confirmLoading={relationBusy}
+        okText="添加"
+        cancelText="取消"
+        destroyOnClose
+      >
+        <Select
+          showSearch
+          value={relationTarget}
+          onChange={setRelationTarget}
+          onSearch={setRelationKeyword}
+          filterOption={false}
+          placeholder="输入工单号或标题搜索"
+          style={{ width: '100%' }}
+          options={relationOptions}
+          notFoundContent={relationKeyword ? '未找到可关联的工单' : '输入关键词开始搜索'}
+        />
+        <div style={{ marginTop: 12, color: '#8c8c8c', fontSize: 12 }}>
+          仅可关联你有权查看的工单；客户只能看到本企业范围内的关联工单。
+        </div>
       </Modal>
 
       <Modal

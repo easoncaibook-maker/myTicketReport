@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Button, Card, DatePicker, Form, Input, Select, Space, Table, Tag, message } from 'antd';
-import { PlusOutlined, ReloadOutlined } from '@ant-design/icons';
+import { Button, Card, Checkbox, DatePicker, Form, Input, Select, Space, Table, Tag, message } from 'antd';
+import { PlusOutlined, ReloadOutlined, StarFilled, StarOutlined } from '@ant-design/icons';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   PRIORITIES,
@@ -52,9 +52,21 @@ export default function TicketListPage() {
       status: values.status,
       priority: values.priority,
       categoryId: values.categoryId,
+      favorite: values.favorite ? '1' : undefined,
       from: range?.[0]?.format('YYYY-MM-DD'),
       to: range?.[1]?.format('YYYY-MM-DD'),
     });
+  };
+
+  const toggleFavorite = async (r: any) => {
+    try {
+      if (r.favorited) await api.del(`/tickets/${r.id}/favorite`);
+      else await api.post(`/tickets/${r.id}/favorite`);
+      queryClient.invalidateQueries({ queryKey: ['tickets'] });
+      queryClient.invalidateQueries({ queryKey: ['ticket', r.id] });
+    } catch (e) {
+      message.error(errorMessage(e));
+    }
   };
 
   const claim = async (id: string) => {
@@ -78,7 +90,22 @@ export default function TicketListPage() {
       title: '标题',
       dataIndex: 'title',
       ellipsis: true,
-      render: (v: string, r: any) => <Link to={`/tickets/${r.id}`}>{v}</Link>,
+      render: (v: string, r: any) => (
+        <Space size={6}>
+          <Button
+            type="text"
+            size="small"
+            title={r.favorited ? '取消收藏' : '收藏'}
+            aria-label={r.favorited ? '取消收藏' : '收藏'}
+            icon={r.favorited ? <StarFilled style={{ color: '#faad14' }} /> : <StarOutlined />}
+            onClick={(e) => {
+              e.stopPropagation();
+              toggleFavorite(r);
+            }}
+          />
+          <Link to={`/tickets/${r.id}`}>{v}</Link>
+        </Space>
+      ),
     },
     { title: '状态', dataIndex: 'status', width: 130, render: (v: any) => <StatusTag status={v} /> },
     { title: '优先级', dataIndex: 'priority', width: 90, render: (v: any) => <PriorityTag priority={v} /> },
@@ -124,9 +151,9 @@ export default function TicketListPage() {
           <Button type="link" size="small" onClick={() => navigate(`/tickets/${r.id}`)}>
             查看
           </Button>
-          {user?.role === 'AGENT' && r.status === 'PENDING' && user.groupIds?.includes(r.groupId) && (
+          {user?.role !== 'REPORTER' && r.status === 'PENDING' && !r.assigneeId && (
             <Button type="link" size="small" onClick={() => claim(r.id)}>
-              认领
+              领取
             </Button>
           )}
         </Space>
@@ -182,6 +209,9 @@ export default function TicketListPage() {
           <Form.Item name="range">
             <RangePicker style={{ width: 240 }} />
           </Form.Item>
+          <Form.Item name="favorite" valuePropName="checked">
+            <Checkbox>只看我收藏</Checkbox>
+          </Form.Item>
           <Form.Item>
             <Space>
               <Button type="primary" htmlType="submit">
@@ -206,6 +236,7 @@ export default function TicketListPage() {
         columns={columns}
         dataSource={data?.items ?? []}
         scroll={{ x: 1180 }}
+        rowClassName={(r: any) => (r.favorited ? 'ticket-row-favorited' : '')}
         pagination={{
           current: data?.page ?? 1,
           pageSize: data?.pageSize ?? 10,

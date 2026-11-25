@@ -202,7 +202,7 @@ body {
 }
 
 .report-bar-label {
-  width: 92px;
+  width: 108px;
   font-size: 13px;
   color: #595959;
   text-align: right;
@@ -232,4 +232,13 @@ body {
 
 .mono {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+/* 我收藏的工单：仅影响当前用户自己的列表视图 */
+.ticket-row-favorited > td {
+  background: #fffbe6 !important;
+}
+
+.ticket-row-favorited:hover > td {
+  background: #fff7d6 !important;
 }

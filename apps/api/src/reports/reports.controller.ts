@@ -1,5 +1,12 @@
 import { Controller, Get, Query } from '@nestjs/common';
-import { PRIORITIES, PRIORITY_LABELS, STATUS_LABELS, TICKET_STATUSES } from '@ticketreport/shared';
+import {
+  CLOSE_SOURCES,
+  CLOSE_SOURCE_LABELS,
+  PRIORITIES,
+  PRIORITY_LABELS,
+  STATUS_LABELS,
+  TICKET_STATUSES,
+} from '@ticketreport/shared';
 import { AuthUser, CurrentUser } from '../common/decorators';
 import { ticketScope } from '../common/scope';
 import { PrismaService } from '../prisma/prisma.service';
@@ -23,7 +30,7 @@ export class ReportsController {
   @Get('overview')
   async overview(@CurrentUser() user: AuthUser, @Query() query: any) {
     const where = this.buildWhere(user, query);
-    const [byStatus, byPriority, byCategory, tickets, hoursAgg] = await Promise.all([
+    const [byStatus, byPriority, byCategory, tickets, hoursAgg, byCloseSource] = await Promise.all([
       this.prisma.ticket.groupBy({ by: ['status'], where, _count: { _all: true } }),
       this.prisma.ticket.groupBy({ by: ['priority'], where, _count: { _all: true } }),
       this.prisma.ticket.groupBy({ by: ['categoryId'], where, _count: { _all: true } }),
@@ -32,6 +39,11 @@ export class ReportsController {
         select: { createdAt: true, closedAt: true, workHours: true },
       }),
       this.prisma.ticket.aggregate({ where, _sum: { workHours: true } }),
+      this.prisma.ticket.groupBy({
+        by: ['closeSource'],
+        where: { ...where, status: 'CLOSED' },
+        _count: { _all: true },
+      }),
     ]);
     const categories = await this.prisma.category.findMany({ select: { id: true, name: true } });
     const catMap = new Map(categories.map((c) => [c.id, c.name]));
@@ -60,6 +72,11 @@ export class ReportsController {
         .sort((a, b) => b.count - a.count),
       avgHandleHours: Number(avgHours.toFixed(1)),
       totalWorkHours: Number((hoursAgg._sum.workHours ?? 0).toFixed(1)),
+      byCloseSource: CLOSE_SOURCES.map((source) => ({
+        source,
+        label: CLOSE_SOURCE_LABELS[source],
+        count: byCloseSource.find((c) => c.closeSource === source)?._count._all ?? 0,
+      })),
     };
   }
 

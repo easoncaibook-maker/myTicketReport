@@ -70,6 +70,7 @@ export type TicketAction =
   | 'TRANSFER'
   | 'RELEASE'
   | 'RESOLVE'
+  | 'CLOSE'
   | 'CONFIRM'
   | 'REJECT'
   | 'FORCE_CLOSE'
@@ -94,7 +95,7 @@ export interface TransitionDef {
  * 服务端在此基础上追加「资源归属、本组、本人」校验。
  */
 export const TRANSITIONS: TransitionDef[] = [
-  { action: 'CLAIM', label: '认领工单', from: ['PENDING'], to: 'PROCESSING', roles: ['AGENT'] },
+  { action: 'CLAIM', label: '认领工单', from: ['PENDING'], to: 'PROCESSING', roles: ['AGENT', 'OPS_LEAD', 'ADMIN'] },
   {
     action: 'ASSIGN',
     label: '改派',
@@ -126,6 +127,13 @@ export const TRANSITIONS: TransitionDef[] = [
     to: 'PENDING_CONFIRM',
     roles: ['AGENT', 'OPS_LEAD', 'ADMIN'],
     requiresResolution: true,
+  },
+  {
+    action: 'CLOSE',
+    label: '关闭工单',
+    from: ['PENDING_CONFIRM'],
+    to: 'CLOSED',
+    roles: ['AGENT', 'OPS_LEAD', 'ADMIN'],
   },
   {
     action: 'CONFIRM',
@@ -202,6 +210,16 @@ export const WORK_HOURS_STATUSES: TicketStatus[] = ['PROCESSING', 'PENDING_CONFI
 export function canEditWorkHours(role: Role, status: TicketStatus): boolean {
   return WORK_HOURS_ROLES.includes(role) && WORK_HOURS_STATUSES.includes(status);
 }
+
+/** 关闭来源：提报人确认 / 处理人关闭 / 管理员强制关闭，用于报表分列统计 */
+export const CLOSE_SOURCES = ['REPORTER_CONFIRMED', 'ASSIGNEE_CLOSED', 'ADMIN_FORCE_CLOSED'] as const;
+export type CloseSource = (typeof CLOSE_SOURCES)[number];
+
+export const CLOSE_SOURCE_LABELS: Record<CloseSource, string> = {
+  REPORTER_CONFIRMED: '提报人确认关闭',
+  ASSIGNEE_CLOSED: '处理人关闭',
+  ADMIN_FORCE_CLOSED: '管理员强制关闭',
+};
 
 export const ACTOR_ROLE_LABELS: Record<string, string> = ROLE_LABELS;
 

@@ -37,6 +37,7 @@ const transferSchema = z.object({
 });
 const reasonSchema = z.object({ reason: z.string().min(2, '请填写原因').max(500) });
 const optionalReasonSchema = z.object({ reason: z.string().max(500).optional() });
+const relationSchema = z.object({ relatedTicketId: z.string().min(1, '请选择要关联的工单') });
 const resolveSchema = z.object({ resolution: z.string().min(5, '请填写处理结果').max(2000) });
 const workHoursSchema = z.object({
   workHours: z
@@ -114,6 +115,41 @@ export class TicketsController {
   @Post(':id/force-close')
   forceClose(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body(new ZodPipe(reasonSchema)) body: any) {
     return this.service.forceClose(user, id, body);
+  }
+
+  /** 处理人在待确认阶段关闭工单 */
+  @Post(':id/close')
+  close(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body(new ZodPipe(optionalReasonSchema)) body: any) {
+    return this.service.close(user, id, body);
+  }
+
+  @Post(':id/favorite')
+  favorite(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.service.favorite(user, id);
+  }
+
+  @Delete(':id/favorite')
+  unfavorite(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.service.unfavorite(user, id);
+  }
+
+  @Get(':id/relations')
+  relations(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.service.relations(user, id);
+  }
+
+  @Post(':id/relations')
+  addRelation(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body(new ZodPipe(relationSchema)) body: any) {
+    return this.service.addRelation(user, id, body.relatedTicketId);
+  }
+
+  @Delete(':id/relations/:relationId')
+  removeRelation(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Param('relationId') relationId: string,
+  ) {
+    return this.service.removeRelation(user, id, relationId);
   }
 
   @Post(':id/reopen')

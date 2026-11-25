@@ -25,6 +25,8 @@ export function ticketScope(user: AuthUser): Prisma.TicketWhereInput {
         { groupId: { in: user.groupIds } },
         { assigneeId: user.id },
         { events: { some: { actorId: user.id } } },
+        // 未认领的待受理工单对所有处理人可见，支持跨组领取兜底
+        { status: 'PENDING', assigneeId: null },
       ],
     };
   }
