@@ -39,11 +39,13 @@ npm run dev:api   # http://localhost:3000/api
 npm run dev:web   # http://localhost:5173
 ```
 
-首次启动前复制环境变量（仓库已提供开发用 `.env`，生产请修改）：
+首次启动前复制环境变量模板（仓库不提供真实 `.env`，请勿把本地 `.env` 提交到仓库）：
 
 ```powershell
-Copy-Item apps/api/.env apps/api/.env.local   # 可选，仅作备份参考
+Copy-Item apps/api/.env.example apps/api/.env
 ```
+
+`.env` 中的 JWT 密钥、SMTP 与管理员初始密码均为开发占位值，生产部署请全部替换。
 
 ### 演示账号
 
