@@ -221,6 +221,19 @@ export class AdminService {
     return publicUser(updated);
   }
 
+  /** 管理员重置任意账号密码为默认密码，强制下次登录改密并踢掉现有会话 */
+  async resetUserPassword(actorId: string, userId: string) {
+    const target = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!target) throw new NotFoundException('用户不存在');
+    const result = await this.auth.adminResetPassword(userId);
+    await this.audit.log(actorId, 'USER_PASSWORD_RESET', 'User', userId, {
+      email: target.email,
+      forcedChange: true,
+      sessionsRevoked: true,
+    });
+    return result;
+  }
+
   // ---------- 分类 ----------
 
   async listCategories(onlyActive = false) {

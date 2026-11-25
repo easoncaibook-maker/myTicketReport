@@ -100,6 +100,27 @@ export default function UsersPage() {
     }
   };
 
+  const resetPassword = (row: any) => {
+    Modal.confirm({
+      title: '重置密码',
+      content: `确定将 ${row.name}（${row.email}）的密码重置为初始密码「Passw0rd!」吗？该账号现有会话将立即失效，下次登录必须先修改密码。`,
+      okText: '确认重置',
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        try {
+          const res = await api.post(`/admin/users/${row.id}/reset-password`);
+          Modal.success({
+            title: '密码已重置',
+            content: `初始密码：${res.defaultPassword}。请通过安全渠道告知用户，其登录后需立即修改。`,
+          });
+          refresh();
+        } catch (e) {
+          message.error(errorMessage(e));
+        }
+      },
+    });
+  };
+
   const enterpriseOptions = useMemo(
     () => (enterprises ?? []).map((e: any) => ({ value: e.id, label: `${e.name}（${e.code}）` })),
     [enterprises],
@@ -188,13 +209,18 @@ export default function UsersPage() {
             {
               title: '状态',
               dataIndex: 'status',
-              width: 100,
-              render: (v: string) => <Tag color={STATUS_COLORS[v]}>{STATUS_LABELS_LOCAL[v] ?? v}</Tag>,
+              width: 120,
+              render: (v: string, r: any) => (
+                <Space size={4} wrap>
+                  <Tag color={STATUS_COLORS[v]}>{STATUS_LABELS_LOCAL[v] ?? v}</Tag>
+                  {r.mustChangePassword && <Tag color="gold">待改密</Tag>}
+                </Space>
+              ),
             },
             { title: '创建时间', dataIndex: 'createdAt', width: 150, render: (v) => formatDate(v) },
             {
               title: '操作',
-              width: 220,
+              width: 300,
               render: (_: any, r: any) => (
                 <Space size={2} wrap>
                   {r.status === 'INVITED' && (
@@ -202,6 +228,9 @@ export default function UsersPage() {
                       重发邀请
                     </Button>
                   )}
+                  <Button type="link" size="small" onClick={() => resetPassword(r)}>
+                    重置密码
+                  </Button>
                   {r.id !== undefined && (
                     <Button
                       type="link"

@@ -1,11 +1,13 @@
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Alert, Button, Card, Descriptions, Form, Input, Space, message } from 'antd';
 import { ROLE_LABELS } from '@ticketreport/shared';
 import { api, errorMessage } from '../lib/api';
 import { useAuth } from '../lib/auth';
 
 export default function ProfilePage() {
-  const { user, reload } = useAuth();
+  const { user, reload, logout } = useAuth();
+  const navigate = useNavigate();
   const [form] = Form.useForm();
   const [loading, setLoading] = useState(false);
 
@@ -13,8 +15,10 @@ export default function ProfilePage() {
     setLoading(true);
     try {
       await api.patch('/auth/me/password', { oldPassword: values.oldPassword, newPassword: values.newPassword });
-      message.success('密码已修改，请使用新密码继续使用');
+      message.success('密码已修改，请使用新密码重新登录');
       form.resetFields();
+      await logout();
+      navigate('/login', { replace: true });
     } catch (e) {
       message.error(errorMessage(e));
     } finally {

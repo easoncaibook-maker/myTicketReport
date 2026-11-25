@@ -63,6 +63,15 @@ async function request<T = any>(path: string, options: RequestInit = {}, retry =
     } catch {
       payload = null;
     }
+    // 未完成强制改密时，后端会拦截其他接口，这里统一跳转到改密页
+    if (
+      res.status === 403 &&
+      payload?.code === 'PASSWORD_CHANGE_REQUIRED' &&
+      typeof window !== 'undefined' &&
+      !window.location.pathname.startsWith('/change-password')
+    ) {
+      window.location.assign('/change-password');
+    }
     throw new ApiError(res.status, payload);
   }
   if (res.status === 204) return undefined as T;
@@ -110,6 +119,7 @@ export interface CurrentUser {
   enterpriseName?: string | null;
   groupIds: string[];
   siteName?: string;
+  mustChangePassword?: boolean;
 }
 
 export async function refreshSession(): Promise<CurrentUser | null> {

@@ -106,6 +106,11 @@ export class AdminController {
     return this.service.resendInvite(user.id, id);
   }
 
+  @Post('users/:id/reset-password')
+  resetPassword(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.service.resetUserPassword(user.id, id);
+  }
+
   @Patch('users/:id')
   updateUser(
     @CurrentUser() user: AuthUser,

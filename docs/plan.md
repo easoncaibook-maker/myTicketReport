@@ -254,9 +254,11 @@ TicketReport/
 | POST | `/auth/logout` | 登录 | 撤销 refresh |
 | POST | `/auth/activate` | 公开（凭令牌） | 邀请链接设置密码并激活 |
 | POST | `/auth/forgot-password` | 公开 | 发送重置邮件 |
-| POST | `/auth/reset-password` | 公开（凭令牌） | 重置并失效全部会话 |
-| GET | `/auth/me` | 登录 | 当前用户、角色、企业、权限点 |
-| PATCH | `/auth/me/password` | 登录 | 修改密码 |
+| POST | `/auth/reset-password` | 公开（凭令牌） | 重置密码、置「待改密」、递增 `tokenVersion` 并失效全部会话 |
+| GET | `/auth/me` | 登录 | 当前用户、角色、企业、`mustChangePassword` |
+| PATCH | `/auth/me/password` | 登录 | 修改密码（校验原密码，成功后清除待改密标记并失效旧令牌） |
+
+> 强制改密：`AuthGuard` 发现自己加载的 `user.mustChangePassword = true` 时，仅放行 `GET /auth/me`、`PATCH /auth/me/password`、`POST /auth/logout`，其余接口统一返回 `403 { code: 'PASSWORD_CHANGE_REQUIRED' }`；同时比较 JWT 内 `ver` 与数据库 `tokenVersion`，不一致即 `401`（重置/改密后旧访问令牌立即失效）。
 
 #### 管理端
 
@@ -267,6 +269,7 @@ TicketReport/
 | GET | `/admin/enterprises/:id/users` | ADMIN | 企业员工列表 |
 | POST | `/admin/users/invite` | ADMIN | 邀请客户员工或创建运维账号 |
 | POST | `/admin/users/:id/resend-invite` | ADMIN | 重发邀请 |
+| POST | `/admin/users/:id/reset-password` | ADMIN | 重置为默认密码 `Passw0rd!`，置「待改密」，失效全部令牌，写 `USER_PASSWORD_RESET` 审计 |
 | PATCH | `/admin/users/:id` | ADMIN | 改名/改手机/禁用/启用/改角色（仅运维侧，写 `USER_ROLE_CHANGE` 审计，立即生效） |
 | GET/POST | `/admin/categories` · PATCH `/admin/categories/:id` | ADMIN | 分类维护 |
 | GET/POST | `/admin/groups` · PATCH `/admin/groups/:id` | ADMIN | 处理组维护 |
@@ -360,6 +363,7 @@ await prisma.$transaction(async (tx) => {
 | `/login` | 登录 | 公开 |
 | `/activate?token=` | 设置密码激活 | 公开 |
 | `/forgot-password` · `/reset-password?token=` | 找回/重置 | 公开 |
+| `/change-password` | 修改密码（首次登录强制改密复用此页） | 登录 |
 | `/tickets` | 工单列表（客户/运维两种视图形态） | 登录 |
 | `/tickets/new` | 提交工单（运维侧增加「内部工单 / 代客户提单 + 企业选择」） | 登录 |
 | `/tickets/:id` | 工单详情（时间线 + 评论区 + 操作区） | 登录 |
@@ -376,6 +380,7 @@ await prisma.$transaction(async (tx) => {
 - **内部备注**：编辑框顶部 Tab 切换「回复客户 / 内部备注」，内部备注用黄色底 + `仅内部可见` 标签；
 - **状态时间线**：客户侧与运维侧使用同一组件，数据源为服务端已过滤的 `events`；
 - **未读提醒**：`useUnreadCount` 每 30s 轮询（第一阶段不引入 WebSocket），页面标题同步未读数；
+- **强制改密**：登录响应 `user.mustChangePassword` 为真时直接进入 `/change-password`；`RequireAuth` 与 `apiClient` 在收到 403 `PASSWORD_CHANGE_REQUIRED` 时统一跳转该页，改密成功后清理登录态并要求用新密码重新登录；
 - **表单校验**：`packages/shared` 的 zod schema，前端即时提示、后端强校验；
 - **列表**：服务端分页 + URL 同步筛选条件（可分享/刷新保持）。
 
@@ -409,6 +414,7 @@ await prisma.$transaction(async (tx) => {
 | M1-1 企业 CRUD 与停用 | enterprises 模块、管理页 | 对应 AC-ORG-01/02/04 |
 | M1-2 邀请与激活（令牌、邮件模板） | users 模块、auth activate | 邀请邮件可查（outbox），激活可登录 |
 | M1-3 登录/刷新/登出、找回与重置密码 | auth 模块、登录/重置页 | AC-AUTH-01/02/03 |
+| M1-3a 密码重置与强制改密 | `POST /admin/users/:id/reset-password`、`AuthGuard` 强制改密拦截、`tokenVersion` 令牌失效、`/change-password` 页面、账号管理「重置密码」按钮 | AC-AUTH-04/05/06/07 |
 | M1-4 处理组、分类维护 | groups/categories 模块与页面 | 分类必须绑定启用状态的组 |
 | M1-5 租户范围与访问校验基建 | `buildTicketScope`、`TicketAccessService`、`RolesGuard` | 单元测试覆盖各角色 scope |
 | M1-6 隔离测试骨架 | `test/isolation.e2e-spec.ts` | 至少 4 条越权用例先跑通 |
@@ -493,6 +499,7 @@ flowchart LR
 | 接口集成 | 认证、工单流转、评论、附件、通知、报表 | Supertest + 测试库（SQLite 内存/临时文件） | 主流程 + 并发认领 + 越权 404 |
 | 隔离专项 | 跨企业读写、附件直链、报表、通知、内部工单、代客提单 | Supertest | 12 条越权路径矩阵 + 内部工单客户不可见 + 代提企业隔离 |
 | 角色调整 | 运维侧升降级、客户账号转换拦截、审计 | Supertest | AGENT↔OPS_LEAD↔ADMIN 权限即时变化；`USER_ROLE_CHANGE` 落库 |
+| 密码重置 | 管理员重置、邮件链接重置、强制改密拦截、令牌失效、待激活账号重置 | Vitest（白名单单测）+ 接口脚本 | 旧访问/刷新令牌立即失效；未改密访问业务接口 403 `PASSWORD_CHANGE_REQUIRED`；改密后恢复；`USER_PASSWORD_RESET` 落库 |
 | E2E | 4 个角色的完整闭环 | Playwright | 见 M5-1 |
 | 手工验收 | 邮件实际投递、Docker 部署、PG 切换 | 清单 | 对照 requirements.md 第 10 章逐条勾选 |
 

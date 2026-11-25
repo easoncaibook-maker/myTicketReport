@@ -141,6 +141,7 @@ flowchart LR
 | FR-ORG-08 | 分类管理：新增、改名、排序、启用/停用、绑定默认处理组 |
 | FR-ORG-09 | 管理员可在账号管理中将运维侧账号在「处理人 / 运维主管 / 管理员」之间切换，变更立即生效（守卫每次请求从数据库读取角色），并写入审计日志（动作 `USER_ROLE_CHANGE`，记录变更前后角色） |
 | FR-ORG-10 | 客户账号（`REPORTER` 或已绑定客户企业的账号）不允许跨类转成内部员工；接口返回明确错误，需新建内部账号，历史工单仍留在原企业 |
+| FR-ORG-11 | 管理员可在账号管理中对任意账号（客户 / 运维 / 待激活）执行「重置密码」，二次确认后密码重置为默认密码 `Passw0rd!`，写入审计日志（动作 `USER_PASSWORD_RESET`），并立即吊销该账号全部刷新令牌、使已签发的访问令牌失效；重置后该账号下次登录必须先修改密码 |
 
 ### 5.2 认证与找回密码
 
@@ -149,9 +150,11 @@ flowchart LR
 | FR-AUTH-01 | 邮箱 + 密码登录；账号状态为「待激活 / 已禁用」时禁止登录并给出明确提示 |
 | FR-AUTH-02 | 邀请链接携带一次性令牌，用户设置密码后账号激活，令牌 72 小时有效、仅可使用一次 |
 | FR-AUTH-03 | 忘记密码：输入邮箱，若账号存在则发送重置邮件；无论账号是否存在，接口返回一致提示（防账号枚举） |
-| FR-AUTH-04 | 重置令牌 2 小时有效、仅可使用一次；重置成功后使该用户全部会话失效 |
-| FR-AUTH-05 | 登录态使用短期访问令牌 + 可轮换的刷新令牌；登出后刷新令牌失效 |
+| FR-AUTH-04 | 重置令牌 2 小时有效、仅可使用一次；重置成功后使该用户全部会话失效（访问令牌与刷新令牌同时失效） |
+| FR-AUTH-05 | 登录态使用短期访问令牌 + 可轮换的刷新令牌；登出后刷新令牌失效；访问令牌携带令牌版本号（`ver`），与服务端当前版本不一致时立即失效 |
 | FR-AUTH-06 | 登录失败次数限制（同一邮箱 5 次/15 分钟），并记录失败日志 |
+| FR-AUTH-07 | 管理员重置密码、邮件链接重置密码后，账号被标记「待改密」：登录成功但仅可访问自身信息、修改密码与登出，其余接口由后端统一返回 403（错误码 `PASSWORD_CHANGE_REQUIRED`），未改密前无法使用其他功能 |
+| FR-AUTH-08 | 用户修改密码时校验原密码，新密码不能与原密码相同；改密成功后清除「待改密」标记并递增令牌版本号，历史访问令牌与刷新令牌全部失效，需使用新密码重新登录 |
 
 ### 5.3 工单提交
 
@@ -349,6 +352,7 @@ stateDiagram-v2
 | 查看统计报表 | ✅ 本企业范围 | ✅ 本组/本人 | ✅ 全部 | ✅ 全部 |
 | 创建/停用客户企业 | ❌ | ❌ | ❌ | ✅ |
 | 邀请/禁用员工账号 | ❌ | ❌ | ❌ | ✅ |
+| 重置任意账号密码 | ❌ | ❌ | ❌ | ✅ 审计留痕、令牌失效、下次登录强制改密 |
 | 维护分类/处理组 | ❌ | ❌ | ⚠️ 可查看 | ✅ 可维护 |
 | 系统设置 | ❌ | ❌ | ❌ | ✅ |
 | 查看管理审计日志 | ❌ | ❌ | ❌ | ✅ |
@@ -420,6 +424,9 @@ erDiagram
 | role | String | `REPORTER` / `AGENT` / `OPS_LEAD` / `ADMIN`；运维侧角色可由管理员切换 |
 | status | String | `INVITED` / `ACTIVE` / `DISABLED` |
 | invited_at / activated_at / last_login_at | DateTime? | |
+| must_change_password | Boolean | 默认 `false`；管理员重置或邮件重置后置 `true`，登录后必须先改密 |
+| password_changed_at | DateTime? | 最近一次密码变更时间，用于安全审计 |
+| token_version | Int | 默认 `0`；重置/改密时自增，旧访问令牌（携带 `ver`）随即失效 |
 | created_at / updated_at | DateTime | |
 
 索引：`@@index([enterprise_id, role])`、`@@index([status])`
@@ -592,7 +599,7 @@ erDiagram
 | --- | --- | --- |
 | id | String @id | |
 | actor_id | String | 管理员 |
-| action | String | `ENTERPRISE_CREATE` / `USER_INVITE` / `USER_DISABLE` / `USER_ROLE_CHANGE` / `CATEGORY_UPDATE` / `GROUP_UPDATE` / `SETTING_UPDATE` 等 |
+| action | String | `ENTERPRISE_CREATE` / `USER_INVITE` / `USER_DISABLE` / `USER_ROLE_CHANGE` / `USER_PASSWORD_RESET` / `CATEGORY_UPDATE` / `GROUP_UPDATE` / `SETTING_UPDATE` 等 |
 | target_type / target_id | String | 操作对象 |
 | detail | Json? | 变更详情（脱敏） |
 | created_at | DateTime | |
@@ -636,8 +643,12 @@ erDiagram
 ### 10.2 认证
 
 - [ ] AC-AUTH-01 忘记密码流程在账号存在/不存在时响应一致，不泄露账号是否注册；
-- [ ] AC-AUTH-02 重置密码后旧刷新令牌全部失效，需重新登录；
+- [ ] AC-AUTH-02 重置密码后旧访问令牌与刷新令牌全部失效，需重新登录；
 - [ ] AC-AUTH-03 同一邮箱连续 5 次密码错误后进入限制期。
+- [ ] AC-AUTH-04 管理员在账号管理中对客户账号与运维账号执行「重置密码」后，原密码与旧令牌立即不可用，使用 `Passw0rd!` 可登录且 `mustChangePassword=true`；未改密访问业务接口返回 403 `PASSWORD_CHANGE_REQUIRED`，修改密码后恢复正常，审计日志存在 `USER_PASSWORD_RESET`。
+- [ ] AC-AUTH-05 通过「忘记密码」邮件链接设置新密码后，登录同样被要求先改密，改密完成后恢复正常；同一重置链接不可重复使用。
+- [ ] AC-AUTH-06 待激活（`INVITED`）账号被管理员重置后可直接用默认密码登录，并同样要求先改密。
+- [ ] AC-AUTH-07 SMTP 未配置时，重置/邀请邮件仍写入本地 outbox，可从 outbox 中取出链接完成验证。
 
 ### 10.3 工单闭环
 

@@ -10,6 +10,7 @@ import { JwtService } from '@nestjs/jwt';
 import type { Role } from '@ticketreport/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { IS_PUBLIC_KEY, ROLES_KEY } from './decorators';
+import { isAllowedWhileMustChangePassword } from './must-change-password';
 
 @Injectable()
 export class AuthGuard implements CanActivate {
@@ -46,6 +47,23 @@ export class AuthGuard implements CanActivate {
       throw new UnauthorizedException('账号不可用，请联系管理员');
     }
 
+    // 密码被重置 / 修改后，旧访问令牌（tokenVersion 落后）立即失效
+    if ((payload.ver ?? 0) !== (user.tokenVersion ?? 0)) {
+      throw new UnauthorizedException('密码已修改，请重新登录');
+    }
+
+    // 强制改密：除查看自身信息与修改密码外，其余接口一律拦截
+    if (user.mustChangePassword) {
+      const path = String(req.path || req.url || '').split('?')[0];
+      if (!isAllowedWhileMustChangePassword(req.method, path)) {
+        throw new ForbiddenException({
+          statusCode: 403,
+          code: 'PASSWORD_CHANGE_REQUIRED',
+          message: '请先修改初始密码后再使用系统',
+        });
+      }
+    }
+
     req.user = {
       id: user.id,
       email: user.email,
@@ -54,6 +72,7 @@ export class AuthGuard implements CanActivate {
       enterpriseId: user.enterpriseId,
       enterpriseName: user.enterprise?.name ?? null,
       groupIds: user.groupMembers.map((g) => g.groupId),
+      mustChangePassword: !!user.mustChangePassword,
     };
     return true;
   }
