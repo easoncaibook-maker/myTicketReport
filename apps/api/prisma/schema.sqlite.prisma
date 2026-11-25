@@ -48,6 +48,7 @@ model User {
   groupMembers    GroupMember[]
   tokens          AuthToken[]
   refreshTokens   RefreshToken[]
+  favoriteTickets TicketFavorite[]
 
   @@index([enterpriseId, role])
   @@index([status])
@@ -146,6 +147,8 @@ model Ticket {
   closedAt       DateTime?
   closedById     String?
   closeReason    String?
+  /** 关闭来源：REPORTER_CONFIRMED / ASSIGNEE_CLOSED / ADMIN_FORCE_CLOSED */
+  closeSource    String?
   cancelledAt    DateTime?
   cancelReason   String?
   /** 处理工时（小时，一位小数） */
@@ -164,6 +167,9 @@ model Ticket {
   comments   TicketComment[]
   attachments TicketAttachment[]
   events     TicketEvent[]
+  favorites     TicketFavorite[]
+  relationsFrom TicketRelation[] @relation("TicketRelationFrom")
+  relationsTo   TicketRelation[] @relation("TicketRelationTo")
 
   @@index([enterpriseId, status, lastActivityAt])
   @@index([groupId, status])
@@ -222,6 +228,35 @@ model TicketEvent {
   ticket Ticket @relation(fields: [ticketId], references: [id])
 
   @@index([ticketId, createdAt])
+}
+
+/** 工单收藏：个人级数据，每位用户独立 */
+model TicketFavorite {
+  id        String   @id @default(cuid())
+  ticketId  String
+  userId    String
+  createdAt DateTime @default(now())
+
+  ticket Ticket @relation(fields: [ticketId], references: [id])
+  user   User   @relation(fields: [userId], references: [id])
+
+  @@unique([ticketId, userId])
+  @@index([userId, createdAt])
+}
+
+/** 工单关联：多对多；入库时按 id 排序归一化，保证无重复 */
+model TicketRelation {
+  id              String   @id @default(cuid())
+  ticketId        String
+  relatedTicketId String
+  createdById     String
+  createdAt       DateTime @default(now())
+
+  ticket        Ticket @relation("TicketRelationFrom", fields: [ticketId], references: [id])
+  relatedTicket Ticket @relation("TicketRelationTo", fields: [relatedTicketId], references: [id])
+
+  @@unique([ticketId, relatedTicketId])
+  @@index([relatedTicketId])
 }
 
 model Notification {

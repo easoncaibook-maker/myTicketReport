@@ -23,12 +23,13 @@ describe('ticketScope', () => {
     expect(ticketScope(user({ role: 'REPORTER', enterpriseId: null as any }))).toEqual({ enterpriseId: '__none__' });
   });
 
-  it('处理人限定本组 / 本人指派 / 本人参与', () => {
+  it('处理人限定本组 / 本人指派 / 本人参与 / 未认领的待受理工单', () => {
     const scope: any = ticketScope(user({ role: 'AGENT', groupIds: ['g1', 'g2'] }));
     expect(scope.OR).toEqual([
       { groupId: { in: ['g1', 'g2'] } },
       { assigneeId: 'u1' },
       { events: { some: { actorId: 'u1' } } },
+      { status: 'PENDING', assigneeId: null },
     ]);
   });
 

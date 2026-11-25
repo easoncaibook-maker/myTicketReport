@@ -137,6 +137,23 @@ export default function ReportsPage() {
           </Card>
         </Col>
         <Col xs={24} lg={12}>
+          <Card title="关闭来源">
+            {(overview?.byCloseSource ?? []).length === 0 ? (
+              <div style={{ color: '#8c8c8c' }}>暂无数据</div>
+            ) : (
+              overview.byCloseSource.map((s: any, i: number) => (
+                <BarRow
+                  key={s.source}
+                  label={s.label}
+                  count={s.count}
+                  total={(overview.byCloseSource ?? []).reduce((sum: number, x: any) => sum + x.count, 0)}
+                  color={BAR_COLORS[i % BAR_COLORS.length]}
+                />
+              ))
+            )}
+          </Card>
+        </Col>
+        <Col xs={24} lg={12}>
           <Card title="处理人工作量">
             <Table
               rowKey="assigneeId"

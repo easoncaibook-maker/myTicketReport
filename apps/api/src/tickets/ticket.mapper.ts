@@ -1,4 +1,5 @@
 import {
+  CLOSE_SOURCE_LABELS,
   ROLE_LABELS,
   Role,
   STATUS_LABELS,
@@ -7,6 +8,7 @@ import {
   TicketStatus,
   TicketType,
   Priority,
+  CloseSource,
 } from '@ticketreport/shared';
 import { sanitizeRichText } from '../common/rich-text';
 
@@ -15,7 +17,7 @@ function safeHtml(input: unknown): string {
   return sanitizeRichText(typeof input === 'string' ? input : '');
 }
 
-export function ticketSummary(ticket: any) {
+export function ticketSummary(ticket: any, favorited = false) {
   const ticketType = (ticket.ticketType ?? 'CUSTOMER') as TicketType;
   return {
     id: ticket.id,
@@ -43,6 +45,11 @@ export function ticketSummary(ticket: any) {
     categoryName: ticket.category?.name,
     reopenCount: ticket.reopenCount,
     workHours: ticket.workHours ?? null,
+    closeSource: ticket.closeSource ?? null,
+    closeSourceLabel: ticket.closeSource
+      ? CLOSE_SOURCE_LABELS[ticket.closeSource as CloseSource] ?? ticket.closeSource
+      : null,
+    favorited,
     createdAt: ticket.createdAt,
     updatedAt: ticket.updatedAt,
     lastActivityAt: ticket.lastActivityAt,
@@ -97,7 +104,7 @@ export function ticketDetail(ticket: any, viewerRole: Role) {
     }));
   const attachments = (ticket.attachments ?? []).map(attachmentView);
   return {
-    ...ticketSummary(ticket),
+    ...ticketSummary(ticket, !!ticket.favorited),
     resolution: ticket.resolution,
     resolvedAt: ticket.resolvedAt,
     confirmedAt: ticket.confirmedAt,
@@ -106,6 +113,7 @@ export function ticketDetail(ticket: any, viewerRole: Role) {
     comments,
     events,
     attachments,
+    relations: ticket.relations ?? [],
     reporterEmail: isCustomer ? undefined : ticket.reporter?.email,
     assigneeEmail: isCustomer ? undefined : ticket.assignee?.email,
   };

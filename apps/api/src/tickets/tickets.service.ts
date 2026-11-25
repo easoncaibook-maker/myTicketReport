@@ -131,6 +131,9 @@ export class TicketsService {
     if (query.assigneeId) filters.push({ assigneeId: query.assigneeId === 'me' ? user.id : query.assigneeId });
     if (query.groupId) filters.push({ groupId: query.groupId });
     if (query.enterpriseId && user.role !== 'REPORTER') filters.push({ enterpriseId: query.enterpriseId });
+    if (query.favorite === '1' || query.favorite === 'true') {
+      filters.push({ favorites: { some: { userId: user.id } } });
+    }
     if (query.keyword) {
       filters.push({
         OR: [{ ticketNo: { contains: query.keyword } }, { title: { contains: query.keyword } }],
@@ -153,12 +156,25 @@ export class TicketsService {
       }),
       this.prisma.ticket.count({ where }),
     ]);
-    return { items: items.map(ticketSummary), total, page, pageSize };
+    const favoriteIds = new Set(
+      (
+        await this.prisma.ticketFavorite.findMany({
+          where: { userId: user.id, ticketId: { in: items.map((t) => t.id) } },
+          select: { ticketId: true },
+        })
+      ).map((f) => f.ticketId),
+    );
+    return {
+      items: items.map((t) => ticketSummary(t, favoriteIds.has(t.id))),
+      total,
+      page,
+      pageSize,
+    };
   }
 
   async get(user: AuthUser, id: string) {
     const ticket = await this.access.findAccessible(id, user);
-    const [comments, events, attachments] = await Promise.all([
+    const [comments, events, attachments, favorite, relations] = await Promise.all([
       this.prisma.ticketComment.findMany({
         where: { ticketId: id, deletedAt: null },
         orderBy: { createdAt: 'asc' },
@@ -169,8 +185,15 @@ export class TicketsService {
         where: { ticketId: id, commentId: null },
         orderBy: { createdAt: 'asc' },
       }),
+      this.prisma.ticketFavorite.findUnique({
+        where: { ticketId_userId: { ticketId: id, userId: user.id } },
+      }),
+      this.relationViews(user, id),
     ]);
-    const detail = ticketDetail({ ...ticket, comments, events, attachments }, user.role);
+    const detail = ticketDetail(
+      { ...ticket, comments, events, attachments, favorited: !!favorite, relations },
+      user.role,
+    );
     const isReporter =
       ticket.ticketType === 'INTERNAL'
         ? ticket.reporterId === user.id
@@ -190,6 +213,78 @@ export class TicketsService {
         danger: !!t.danger,
       })),
     };
+  }
+
+  /** 关联工单：仅返回当前用户有权查看的对方工单（客户不可跨企业看到） */
+  private async relationViews(user: AuthUser, ticketId: string) {
+    const rows = await this.prisma.ticketRelation.findMany({
+      where: { OR: [{ ticketId }, { relatedTicketId: ticketId }] },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (!rows.length) return [];
+    const otherIds = rows.map((r) => (r.ticketId === ticketId ? r.relatedTicketId : r.ticketId));
+    const visible = await this.prisma.ticket.findMany({
+      where: { AND: [{ id: { in: otherIds } }, ticketScope(user)] },
+      include: TICKET_INCLUDE,
+    });
+    const map = new Map(visible.map((t) => [t.id, t]));
+    const result: any[] = [];
+    for (const row of rows) {
+      const otherId = row.ticketId === ticketId ? row.relatedTicketId : row.ticketId;
+      const ticket = map.get(otherId);
+      if (ticket) result.push({ relationId: row.id, ticket: ticketSummary(ticket) });
+    }
+    return result;
+  }
+
+  async relations(user: AuthUser, id: string) {
+    await this.access.findAccessible(id, user);
+    return this.relationViews(user, id);
+  }
+
+  async addRelation(user: AuthUser, id: string, relatedTicketId: string) {
+    if (!relatedTicketId) throw new BadRequestException('请选择要关联的工单');
+    if (relatedTicketId === id) throw new BadRequestException('不能关联工单自身');
+    await this.access.findAccessible(id, user);
+    // 越权关联一律 404，避免通过关联探测其他企业工单
+    await this.access.findAccessible(relatedTicketId, user);
+    const [first, second] = id < relatedTicketId ? [id, relatedTicketId] : [relatedTicketId, id];
+    const exists = await this.prisma.ticketRelation.findUnique({
+      where: { ticketId_relatedTicketId: { ticketId: first, relatedTicketId: second } },
+    });
+    if (exists) throw new ConflictException('这两个工单已关联');
+    await this.prisma.ticketRelation.create({
+      data: { ticketId: first, relatedTicketId: second, createdById: user.id },
+    });
+    return this.get(user, id);
+  }
+
+  async removeRelation(user: AuthUser, id: string, relationId: string) {
+    const relation = await this.prisma.ticketRelation.findFirst({
+      where: { id: relationId, OR: [{ ticketId: id }, { relatedTicketId: id }] },
+    });
+    if (!relation) throw new NotFoundException('关联不存在');
+    // 双方都可见才允许解除，避免操作到看不到的数据
+    await this.access.findAccessible(relation.ticketId, user);
+    await this.access.findAccessible(relation.relatedTicketId, user);
+    await this.prisma.ticketRelation.delete({ where: { id: relationId } });
+    return this.get(user, id);
+  }
+
+  async favorite(user: AuthUser, id: string) {
+    await this.access.findAccessible(id, user);
+    await this.prisma.ticketFavorite.upsert({
+      where: { ticketId_userId: { ticketId: id, userId: user.id } },
+      create: { ticketId: id, userId: user.id },
+      update: {},
+    });
+    return { favorited: true };
+  }
+
+  async unfavorite(user: AuthUser, id: string) {
+    await this.access.findAccessible(id, user);
+    await this.prisma.ticketFavorite.deleteMany({ where: { ticketId: id, userId: user.id } });
+    return { favorited: false };
   }
 
   /** 清洗富文本描述并校验纯文本长度（10~5000 字） */
@@ -350,14 +445,15 @@ export class TicketsService {
 
   async claim(user: AuthUser, id: string) {
     const ticket = await this.access.findAccessible(id, user);
-    if (user.role !== 'AGENT') throw new ForbiddenException('只有处理人可以认领工单');
-    if (!this.access.isInGroup(user, ticket.groupId)) {
-      throw new ForbiddenException('只能认领本处理组的工单');
+    if (!['AGENT', 'OPS_LEAD', 'ADMIN'].includes(user.role)) {
+      throw new ForbiddenException('只有运维侧账号可以领取工单');
     }
     this.assertTransition(ticket.status, 'CLAIM', user.role);
+    // 跨组领取：不再要求属于原处理组，但要在时间线留痕便于追溯
+    const crossGroup = !this.access.isInGroup(user, ticket.groupId);
     await this.prisma.$transaction(async (tx) => {
       const updated = await tx.ticket.updateMany({
-        where: { id, status: 'PENDING', version: ticket.version },
+        where: { id, status: 'PENDING', version: ticket.version, assigneeId: null },
         data: {
           status: 'PROCESSING',
           assigneeId: user.id,
@@ -371,9 +467,10 @@ export class TicketsService {
           ticketId: id,
           actorId: user.id,
           actorName: user.name,
-          action: 'CLAIM',
+          action: crossGroup ? 'CLAIM_CROSS' : 'CLAIM',
           fromValue: 'PENDING',
           toValue: 'PROCESSING',
+          reason: crossGroup ? `跨组领取，原处理组：${ticket.group?.name ?? '未分组'}` : null,
           visibility: 'PUBLIC',
         },
       });
@@ -623,6 +720,63 @@ export class TicketsService {
     if (ticket.reporterId !== user.id) throw new ForbiddenException('只有客户提报人本人可以执行该操作');
   }
 
+  /** 处理人在待确认阶段直接关闭（客户未确认但问题已解决） */
+  async close(user: AuthUser, id: string, body: any) {
+    const ticket = await this.access.findAccessible(id, user);
+    this.assertTransition(ticket.status, 'CLOSE', user.role);
+    if (user.role === 'AGENT' && ticket.assigneeId !== user.id) {
+      throw new ForbiddenException('只有当前处理人可以关闭工单');
+    }
+    const reason = body.reason ?? null;
+    await this.prisma.$transaction(async (tx) => {
+      const updated = await tx.ticket.updateMany({
+        where: { id, version: ticket.version, status: 'PENDING_CONFIRM' },
+        data: {
+          status: 'CLOSED',
+          closedAt: new Date(),
+          closedById: user.id,
+          closeReason: reason,
+          closeSource: 'ASSIGNEE_CLOSED',
+          version: { increment: 1 },
+          lastActivityAt: new Date(),
+        },
+      });
+      if (updated.count === 0) throw new ConflictException('工单状态已变更，请刷新后重试');
+      await tx.ticketEvent.create({
+        data: {
+          ticketId: id,
+          actorId: user.id,
+          actorName: user.name,
+          action: 'CLOSE',
+          fromValue: 'PENDING_CONFIRM',
+          toValue: 'CLOSED',
+          reason,
+          visibility: 'PUBLIC',
+        },
+      });
+    });
+    await this.notifications.notify({
+      type: 'TICKET_CLOSED',
+      title: `工单已关闭 ${ticket.ticketNo}`,
+      body: `处理人 ${user.name} 关闭了工单「${ticket.title}」${reason ? `：${reason}` : ''}`,
+      ticketId: id,
+      recipients: [this.reporterRecipient(ticket)],
+      email:
+        ticket.ticketType === 'CUSTOMER'
+          ? {
+              template: 'ticketClosed',
+              data: {
+                ticketNo: ticket.ticketNo,
+                title: ticket.title,
+                reason: reason || '处理人确认问题已解决',
+                link: this.link(id),
+              },
+            }
+          : undefined,
+    });
+    return this.get(user, id);
+  }
+
   async confirm(user: AuthUser, id: string) {
     const ticket = await this.access.findAccessible(id, user);
     this.assertReporterAction(user, ticket, 'CONFIRM');
@@ -635,6 +789,7 @@ export class TicketsService {
           confirmedAt: new Date(),
           closedAt: new Date(),
           closedById: user.id,
+          closeSource: 'REPORTER_CONFIRMED',
           version: { increment: 1 },
           lastActivityAt: new Date(),
         },
@@ -722,6 +877,7 @@ export class TicketsService {
           closedAt: new Date(),
           closedById: user.id,
           closeReason: body.reason,
+          closeSource: 'ADMIN_FORCE_CLOSED',
           version: { increment: 1 },
           lastActivityAt: new Date(),
         },
@@ -783,6 +939,8 @@ export class TicketsService {
           status: nextStatus,
           assigneeId: assignee?.id ?? null,
           closedAt: null,
+          closedById: null,
+          closeSource: null,
           confirmedAt: null,
           reopenCount: { increment: 1 },
           version: { increment: 1 },

@@ -495,6 +495,28 @@ await prisma.$transaction(async (tx) => {
 | M6-5 运维角色调整 | `PATCH /admin/users/:id` 支持 `role`；客户账号转换拦截；`USER_ROLE_CHANGE` 审计 | 升降级后下一次请求权限立即变化（AC-ORG-05/06） |
 | M6-6 前端适配 | 提交页归属选择、详情动作上下文、账号管理角色下拉 | 处理人 / 主管 / 管理员菜单与按钮正确 |
 
+### M7 领取 / 关闭来源 / 收藏 / 关联（M，v0.4 增补）
+
+| 任务 | 产出 | 完成标准 |
+| --- | --- | --- |
+| M7-1 数据模型扩展 | `Ticket.closeSource` 可空列；新表 `TicketFavorite`、`TicketRelation`（双 schema 同步） | `npm run db:push` 增量升级成功，历史库无需重建 |
+| M7-2 领取与跨组追溯 | `POST /tickets/:id/claim` 放开组限制；`updateMany` 条件更新防并发；跨组写 `CLAIM_CROSS` 事件并记录原处理组；处理人可见范围增加「未认领待受理工单」 | 跨组领取成功且时间线可追溯；客户领取 403；并发仅一人成功（AC-CLAIM-01~03） |
+| M7-3 关闭扩展与来源 | `POST /tickets/:id/close`（待确认阶段处理人关闭）；确认 / 关闭 / 强制关闭分别写 `closeSource`；`/reports/overview` 返回 `byCloseSource` | 三类来源分列统计正确；非当前处理人 403；非待确认阶段 409（AC-CLOSE-01~03） |
+| M7-4 收藏 | `POST/DELETE /tickets/:id/favorite`；列表 `favorite=1` 筛选与 `favorited` 注入 | 个人级隔离，他人视图不受影响（AC-FAV-01/02） |
+| M7-5 关联与可见性 | `GET/POST /tickets/:id/relations`、`DELETE /tickets/:id/relations/:relationId`；ID 归一化 + 唯一约束；读取按 `ticketScope` 过滤，读写双端越权 404 | 双向展示 / 解除 / 409；客户跨企业关联 404 且列表被过滤（AC-REL-01/02） |
+| M7-6 前端适配 | 详情页「领取工单」按钮与跨组提示、收藏按钮、关联卡片与搜索弹窗、关闭操作；列表星标 / 高亮 / 「只看我收藏」；报表「关闭来源」卡片 | 构建通过，交互与状态提示正确 |
+
+接口清单（v0.4 新增）：
+
+| 方法 | 路径 | 权限 | 说明 |
+| --- | --- | --- | --- |
+| POST | `/tickets/:id/claim` | AGENT / OPS_LEAD / ADMIN | 领取待受理且未认领工单，跨组领取写 `CLAIM_CROSS` |
+| POST | `/tickets/:id/close` | AGENT（本人处理）/ OPS_LEAD / ADMIN | 待确认阶段关闭，`closeSource=ASSIGNEE_CLOSED` |
+| POST / DELETE | `/tickets/:id/favorite` | 有权查看该工单的用户 | 收藏 / 取消收藏（个人级） |
+| GET / POST | `/tickets/:id/relations` | 有权查看该工单的用户 | 查询 / 添加关联（双方可见才展示，越权 404） |
+| DELETE | `/tickets/:id/relations/:relationId` | 双方均有权查看 | 解除关联 |
+| GET | `/reports/overview` | 运维侧 | 新增 `byCloseSource` 分列统计 |
+
 ### 后续（第二阶段，不在本次实施）
 
 企业微信渠道实现、SLA 与超时提醒、满意度评价、知识库、分派规则引擎与值班表、报表增强与导出。
@@ -524,6 +546,7 @@ flowchart LR
 | 角色调整 | 运维侧升降级、客户账号转换拦截、审计 | Supertest | AGENT↔OPS_LEAD↔ADMIN 权限即时变化；`USER_ROLE_CHANGE` 落库 |
 | 密码重置 | 管理员重置、邮件链接重置、强制改密拦截、令牌失效、待激活账号重置 | Vitest（白名单单测）+ 接口脚本 | 旧访问/刷新令牌立即失效；未改密访问业务接口 403 `PASSWORD_CHANGE_REQUIRED`；改密后恢复；`USER_PASSWORD_RESET` 落库 |
 | 富文本 | HTML 白名单清洗、纯文本降级、内嵌图片附件与权限、字数校验、白屏回归 | Vitest + 接口脚本 + 浏览器 | 脚本/事件属性/`javascript:` 被清除；排版与附件图片保留；描述/评论按纯文本校验长度；跨企业下载 404；邮件正文为纯文本；详情页真实浏览器可正常渲染 |
+| v0.4 增量 | 跨组领取、关闭来源、收藏隔离、关联越权 | Vitest + 接口脚本 | 跨组 `CLAIM_CROSS` 事件、三类关闭来源计数、收藏个人级隔离、关联重复 409 / 跨企业 404 / 可见性过滤 |
 | E2E | 4 个角色的完整闭环 | Playwright | 见 M5-1 |
 | 手工验收 | 邮件实际投递、Docker 部署、PG 切换 | 清单 | 对照 requirements.md 第 10 章逐条勾选 |
 
