@@ -121,6 +121,24 @@ export default function UsersPage() {
     });
   };
 
+  const resetTotp = (row: any) => {
+    Modal.confirm({
+      title: '解绑 TOTP 验证器',
+      content: `确定解绑 ${row.name}（${row.email}）的验证器吗？将清空密钥与恢复码并记录审计日志，该用户下次登录需重新绑定。`,
+      okText: '确认解绑',
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        try {
+          await api.post(`/admin/users/${row.id}/reset-totp`);
+          message.success('已解绑该用户的 TOTP');
+          refresh();
+        } catch (e) {
+          message.error(errorMessage(e));
+        }
+      },
+    });
+  };
+
   const enterpriseOptions = useMemo(
     () => (enterprises ?? []).map((e: any) => ({ value: e.id, label: `${e.name}（${e.code}）` })),
     [enterprises],
@@ -217,6 +235,12 @@ export default function UsersPage() {
                 </Space>
               ),
             },
+            {
+              title: '登录验证',
+              dataIndex: 'totpEnabled',
+              width: 120,
+              render: (v: boolean) => (v ? <Tag color="green">TOTP 已绑定</Tag> : <Tag>未绑定</Tag>),
+            },
             { title: '创建时间', dataIndex: 'createdAt', width: 150, render: (v) => formatDate(v) },
             {
               title: '操作',
@@ -231,6 +255,11 @@ export default function UsersPage() {
                   <Button type="link" size="small" onClick={() => resetPassword(r)}>
                     重置密码
                   </Button>
+                  {r.totpEnabled && (
+                    <Button type="link" size="small" danger onClick={() => resetTotp(r)}>
+                      重置 TOTP
+                    </Button>
+                  )}
                   {r.id !== undefined && (
                     <Button
                       type="link"

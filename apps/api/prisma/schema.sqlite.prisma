@@ -39,6 +39,13 @@ model User {
   mustChangePassword Boolean @default(false)
   passwordChangedAt  DateTime?
   tokenVersion       Int      @default(0)
+  /** TOTP 密钥；totpEnabledAt 非空表示已启用 */
+  totpSecret         String?
+  totpEnabledAt      DateTime?
+  /** 恢复码（JSON：仅保存哈希与使用时间） */
+  totpRecoveryCodes  String?
+  /** 最近一次校验通过的时间步，防止同一动态码重放 */
+  totpLastStep       Int?
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
@@ -49,6 +56,8 @@ model User {
   tokens          AuthToken[]
   refreshTokens   RefreshToken[]
   favoriteTickets TicketFavorite[]
+  loginChallenges LoginChallenge[]
+  trustedDevices  TrustedDevice[]
 
   @@index([enterpriseId, role])
   @@index([status])
@@ -307,4 +316,45 @@ model AuditLog {
   createdAt  DateTime @default(now())
 
   @@index([createdAt])
+}
+
+/** 登录二次验证挑战：一次性票据，带过期与尝试次数限制 */
+model LoginChallenge {
+  id          String    @id @default(cuid())
+  userId      String
+  /** SLIDER / EMAIL_CODE / TOTP / TOTP_ENROLL */
+  mode        String
+  tokenHash   String    @unique
+  /** 滑块目标坐标 / 邮件验证码哈希 / TOTP 待绑定密钥 */
+  secret      String?
+  attempts    Int       @default(0)
+  maxAttempts Int       @default(5)
+  sendCount   Int       @default(0)
+  lastSentAt  DateTime?
+  expiresAt   DateTime
+  consumedAt  DateTime?
+  ip          String?
+  createdAt   DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId, mode])
+  @@index([expiresAt])
+}
+
+/** 信任设备：邮件验证码通过后可免验证登录，可查看与撤销 */
+model TrustedDevice {
+  id         String    @id @default(cuid())
+  userId     String
+  tokenHash  String    @unique
+  userAgent  String?
+  ip         String?
+  lastUsedAt DateTime?
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId, expiresAt])
 }

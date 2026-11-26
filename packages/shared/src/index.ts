@@ -221,6 +221,22 @@ export const CLOSE_SOURCE_LABELS: Record<CloseSource, string> = {
   ADMIN_FORCE_CLOSED: '管理员强制关闭',
 };
 
+/** 登录验证方式（系统设置三选一，切换后立即生效） */
+export const LOGIN_VERIFICATION_MODES = ['SLIDER', 'EMAIL_CODE', 'TOTP'] as const;
+export type LoginVerificationMode = (typeof LOGIN_VERIFICATION_MODES)[number];
+
+export const LOGIN_VERIFICATION_LABELS: Record<LoginVerificationMode, string> = {
+  SLIDER: '滑块验证',
+  EMAIL_CODE: '邮件验证码',
+  TOTP: 'Google 验证器（TOTP）',
+};
+
+export const LOGIN_VERIFICATION_DESCRIPTIONS: Record<LoginVerificationMode, string> = {
+  SLIDER: '拖动滑块对齐缺口，无需外部服务，内网可用',
+  EMAIL_CODE: '向账号邮箱发送 6 位验证码，可记住信任设备',
+  TOTP: '使用 Google Authenticator 等验证器应用生成动态码',
+};
+
 export const ACTOR_ROLE_LABELS: Record<string, string> = ROLE_LABELS;
 
 export interface Paged<T> {

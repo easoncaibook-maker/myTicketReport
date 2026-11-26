@@ -6,6 +6,9 @@ const DEFAULTS: Record<string, string> = {
   reopenWindowDays: '7',
   maxAttachmentMb: '20',
   emailEnabled: 'true',
+  loginVerificationMode: 'SLIDER',
+  trustedDeviceDays: '7',
+  requireTotpForOps: 'false',
 };
 
 @Injectable()
@@ -32,11 +35,22 @@ export class SettingsService {
       reopenWindowDays: Number(map.reopenWindowDays),
       maxAttachmentMb: Number(map.maxAttachmentMb),
       emailEnabled: map.emailEnabled === 'true',
+      loginVerificationMode: map.loginVerificationMode,
+      trustedDeviceDays: Number(map.trustedDeviceDays) || 7,
+      requireTotpForOps: map.requireTotpForOps === 'true',
     };
   }
 
   async updateMany(values: Record<string, unknown>, actorId: string) {
-    const allowed = ['siteName', 'reopenWindowDays', 'maxAttachmentMb', 'emailEnabled'];
+    const allowed = [
+      'siteName',
+      'reopenWindowDays',
+      'maxAttachmentMb',
+      'emailEnabled',
+      'loginVerificationMode',
+      'trustedDeviceDays',
+      'requireTotpForOps',
+    ];
     const entries = Object.entries(values).filter(([k, v]) => allowed.includes(k) && v !== undefined);
     for (const [key, value] of entries) {
       const str = typeof value === 'boolean' ? String(value) : String(value);

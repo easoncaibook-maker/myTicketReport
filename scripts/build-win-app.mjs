@@ -325,10 +325,10 @@ const ticketInfo = tableInfo('Ticket');
 const ticketCols = ticketInfo.map((c) => c.name);
 const enterpriseCol = ticketInfo.find((c) => c.name === 'enterpriseId');
 
-const needUser = ['mustChangePassword', 'passwordChangedAt', 'tokenVersion'].filter((c) => !userCols.includes(c));
+const needUser = ['mustChangePassword', 'passwordChangedAt', 'tokenVersion', 'totpSecret', 'totpEnabledAt', 'totpRecoveryCodes', 'totpLastStep'].filter((c) => !userCols.includes(c));
 const needTicketCols = ['ticketType', 'onBehalf', 'closeSource', 'workHours'].filter((c) => !ticketCols.includes(c));
 const needRebuild = ticketCols.length > 0 && (needTicketCols.length > 0 || (enterpriseCol && enterpriseCol.notnull === 1));
-const needTables = !hasTable('TicketFavorite') || !hasTable('TicketRelation');
+const needTables = !hasTable('TicketFavorite') || !hasTable('TicketRelation') || !hasTable('LoginChallenge') || !hasTable('TrustedDevice');
 
 if (!needUser.length && !needRebuild && !needTables) {
   console.log('[migrate] 数据库结构已是最新');
@@ -345,6 +345,10 @@ if (needUser.length) {
   if (needUser.includes('mustChangePassword')) db.exec('ALTER TABLE "User" ADD COLUMN "mustChangePassword" BOOLEAN NOT NULL DEFAULT false');
   if (needUser.includes('passwordChangedAt')) db.exec('ALTER TABLE "User" ADD COLUMN "passwordChangedAt" DATETIME');
   if (needUser.includes('tokenVersion')) db.exec('ALTER TABLE "User" ADD COLUMN "tokenVersion" INTEGER NOT NULL DEFAULT 0');
+  if (needUser.includes('totpSecret')) db.exec('ALTER TABLE "User" ADD COLUMN "totpSecret" TEXT');
+  if (needUser.includes('totpEnabledAt')) db.exec('ALTER TABLE "User" ADD COLUMN "totpEnabledAt" DATETIME');
+  if (needUser.includes('totpRecoveryCodes')) db.exec('ALTER TABLE "User" ADD COLUMN "totpRecoveryCodes" TEXT');
+  if (needUser.includes('totpLastStep')) db.exec('ALTER TABLE "User" ADD COLUMN "totpLastStep" INTEGER');
   db.exec('PRAGMA foreign_keys=ON');
   console.log('[migrate] 已补齐 User 字段: ' + needUser.join(', '));
 }
@@ -441,6 +445,47 @@ if (!hasTable('TicketRelation')) {
   db.exec('CREATE UNIQUE INDEX "TicketRelation_ticketId_relatedTicketId_key" ON "TicketRelation"("ticketId", "relatedTicketId")');
   db.exec('CREATE INDEX "TicketRelation_relatedTicketId_idx" ON "TicketRelation"("relatedTicketId")');
   console.log('[migrate] 已创建 TicketRelation 表');
+}
+
+if (!hasTable('LoginChallenge')) {
+  db.exec('CREATE TABLE "LoginChallenge" (' +
+    '"id" TEXT NOT NULL PRIMARY KEY, ' +
+    '"userId" TEXT NOT NULL, ' +
+    '"mode" TEXT NOT NULL, ' +
+    '"tokenHash" TEXT NOT NULL, ' +
+    '"secret" TEXT, ' +
+    '"attempts" INTEGER NOT NULL DEFAULT 0, ' +
+    '"maxAttempts" INTEGER NOT NULL DEFAULT 5, ' +
+    '"sendCount" INTEGER NOT NULL DEFAULT 0, ' +
+    '"lastSentAt" DATETIME, ' +
+    '"expiresAt" DATETIME NOT NULL, ' +
+    '"consumedAt" DATETIME, ' +
+    '"ip" TEXT, ' +
+    '"createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, ' +
+    'CONSTRAINT "LoginChallenge_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User" ("id") ON DELETE RESTRICT ON UPDATE CASCADE' +
+    ')');
+  db.exec('CREATE UNIQUE INDEX "LoginChallenge_tokenHash_key" ON "LoginChallenge"("tokenHash")');
+  db.exec('CREATE INDEX "LoginChallenge_userId_mode_idx" ON "LoginChallenge"("userId", "mode")');
+  db.exec('CREATE INDEX "LoginChallenge_expiresAt_idx" ON "LoginChallenge"("expiresAt")');
+  console.log('[migrate] 已创建 LoginChallenge 表');
+}
+
+if (!hasTable('TrustedDevice')) {
+  db.exec('CREATE TABLE "TrustedDevice" (' +
+    '"id" TEXT NOT NULL PRIMARY KEY, ' +
+    '"userId" TEXT NOT NULL, ' +
+    '"tokenHash" TEXT NOT NULL, ' +
+    '"userAgent" TEXT, ' +
+    '"ip" TEXT, ' +
+    '"lastUsedAt" DATETIME, ' +
+    '"expiresAt" DATETIME NOT NULL, ' +
+    '"revokedAt" DATETIME, ' +
+    '"createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, ' +
+    'CONSTRAINT "TrustedDevice_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User" ("id") ON DELETE RESTRICT ON UPDATE CASCADE' +
+    ')');
+  db.exec('CREATE UNIQUE INDEX "TrustedDevice_tokenHash_key" ON "TrustedDevice"("tokenHash")');
+  db.exec('CREATE INDEX "TrustedDevice_userId_expiresAt_idx" ON "TrustedDevice"("userId", "expiresAt")');
+  console.log('[migrate] 已创建 TrustedDevice 表');
 }
 
 const check = db.prepare('PRAGMA integrity_check').get();

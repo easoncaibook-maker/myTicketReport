@@ -14,9 +14,12 @@ import { PrismaService } from '../prisma/prisma.service';
 
 function publicUser(user: any) {
   if (!user) return user;
-  const { passwordHash, tokens, refreshTokens, groupMembers, ...rest } = user;
+  const { passwordHash, tokens, refreshTokens, groupMembers, totpSecret, totpRecoveryCodes, ...rest } = user;
   return {
     ...rest,
+    totpEnabled: !!user.totpEnabledAt,
+    totpSecret: undefined,
+    totpRecoveryCodes: undefined,
     groupIds: (groupMembers ?? []).map((g: any) => g.groupId),
     roleLabel: ROLE_LABELS[user.role as Role] ?? user.role,
   };
@@ -232,6 +235,19 @@ export class AdminService {
       sessionsRevoked: true,
     });
     return result;
+  }
+
+  /** 管理员解绑用户 TOTP：清空密钥与恢复码并记录审计，用户下次登录需重新绑定 */
+  async resetUserTotp(actorId: string, userId: string) {
+    const target = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!target) throw new NotFoundException('用户不存在');
+    await this.auth.resetUserTotp(userId);
+    await this.audit.log(actorId, 'USER_TOTP_RESET', 'User', userId, {
+      email: target.email,
+      totpDisabled: true,
+      recoveryCodesCleared: true,
+    });
+    return { ok: true };
   }
 
   // ---------- 分类 ----------

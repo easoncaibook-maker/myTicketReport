@@ -12,6 +12,7 @@ import { randomToken, hashPassword, hashToken, verifyPassword } from '../common/
 import { MailService } from '../mail/mail.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { SettingsService } from '../settings/settings.module';
+import { LoginVerificationService } from './login-verification.service';
 
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
 const LOGIN_MAX_FAILS = 5;
@@ -29,6 +30,7 @@ export class AuthService {
     private readonly config: ConfigService,
     private readonly mail: MailService,
     private readonly settings: SettingsService,
+    private readonly verification: LoginVerificationService,
   ) {}
 
   private async signAccess(user: { id: string; role: string; tokenVersion?: number }) {
@@ -74,7 +76,12 @@ export class AuthService {
     }
   }
 
-  async login(email: string, password: string, meta: { ip?: string; userAgent?: string }) {
+  async login(
+    email: string,
+    password: string,
+    meta: { ip?: string; userAgent?: string },
+    deviceToken?: string,
+  ) {
     const normalized = email.trim().toLowerCase();
     this.checkThrottle(normalized);
     const user = await this.prisma.user.findUnique({
@@ -95,11 +102,78 @@ export class AuthService {
       throw new ForbiddenException('所属企业已停用，请联系管理员');
     }
     this.loginFails.delete(normalized);
-    await this.prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
 
+    // 密码校验通过后进入二次验证；通过后才签发令牌，避免绕过
+    const started = await this.verification.start(user, meta, deviceToken);
+    if (started.skip) return this.completeLogin(user, meta);
+    return started.payload;
+  }
+
+  /** 二次验证通过后签发访问令牌与刷新令牌 */
+  private async completeLogin(user: any, meta: { ip?: string; userAgent?: string }) {
+    await this.prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
     const accessToken = await this.signAccess(user);
     const refreshToken = await this.createRefreshToken(user.id, meta);
     return { accessToken, refreshToken, user: this.toPublic(user) };
+  }
+
+  async verifyLogin(
+    input: {
+      challengeId: string;
+      sliderX?: number;
+      code?: string;
+      recoveryCode?: string;
+      rememberDevice?: boolean;
+    },
+    meta: { ip?: string; userAgent?: string },
+  ) {
+    const { user, trustedDeviceToken, trustedDeviceExpiresAt } = await this.verification.verify(input, meta);
+    const result = await this.completeLogin(user, meta);
+    return { ...result, trustedDeviceToken, trustedDeviceExpiresAt };
+  }
+
+  async resendEmailCode(challengeId: string) {
+    return this.verification.resendEmailCode(challengeId);
+  }
+
+  async refreshSlider(challengeId: string, meta: { ip?: string; userAgent?: string }) {
+    const payload = await this.verification.refreshSlider(challengeId, meta);
+    return payload;
+  }
+
+  async enrollTotp(enrollToken: string, code: string, meta: { ip?: string; userAgent?: string }) {
+    const { user, recoveryCodes } = await this.verification.enrollTotp(enrollToken, code);
+    const result = await this.completeLogin(user, meta);
+    return { ...result, recoveryCodes };
+  }
+
+  listTrustedDevices(userId: string) {
+    return this.verification.listTrustedDevices(userId);
+  }
+
+  revokeTrustedDevice(userId: string, id: string) {
+    return this.verification.revokeTrustedDevice(userId, id);
+  }
+
+  revokeAllTrustedDevices(userId: string) {
+    return this.verification.revokeAllTrustedDevices(userId);
+  }
+
+  totpStatus(userId: string) {
+    return this.verification.totpStatus(userId);
+  }
+
+  setupTotp(userId: string, account: string) {
+    return this.verification.setupTotp(userId, account);
+  }
+
+  enableTotp(userId: string, code: string) {
+    return this.verification.enableTotp(userId, code);
+  }
+
+  /** 管理员解绑 TOTP：清空密钥与恢复码 */
+  resetUserTotp(userId: string) {
+    return this.verification.resetTotp(userId);
   }
 
   async refresh(rawToken: string, meta: { ip?: string; userAgent?: string }) {
@@ -140,6 +214,7 @@ export class AuthService {
       enterpriseName: user.enterprise?.name ?? null,
       groupIds: (user.groupMembers ?? []).map((g: any) => g.groupId),
       mustChangePassword: !!user.mustChangePassword,
+      totpEnabled: !!user.totpEnabledAt,
     };
   }
 
@@ -232,6 +307,15 @@ export class AuthService {
         where: { userId: row.userId, revokedAt: null },
         data: { revokedAt: now },
       }),
+      // 密码重置后旧密码派生的信任设备与未完成验证一律失效
+      this.prisma.trustedDevice.updateMany({
+        where: { userId: row.userId, revokedAt: null },
+        data: { revokedAt: now },
+      }),
+      this.prisma.loginChallenge.updateMany({
+        where: { userId: row.userId, consumedAt: null },
+        data: { consumedAt: now },
+      }),
     ]);
     return { ok: true };
   }
@@ -258,6 +342,15 @@ export class AuthService {
       this.prisma.refreshToken.updateMany({
         where: { userId, revokedAt: null },
         data: { revokedAt: now },
+      }),
+      // 修改密码后信任设备与未完成验证全部失效，需重新验证
+      this.prisma.trustedDevice.updateMany({
+        where: { userId, revokedAt: null },
+        data: { revokedAt: now },
+      }),
+      this.prisma.loginChallenge.updateMany({
+        where: { userId, consumedAt: null },
+        data: { consumedAt: now },
       }),
     ]);
     return { ok: true };
@@ -287,6 +380,14 @@ export class AuthService {
       this.prisma.authToken.updateMany({
         where: { userId, usedAt: null },
         data: { usedAt: now },
+      }),
+      this.prisma.trustedDevice.updateMany({
+        where: { userId, revokedAt: null },
+        data: { revokedAt: now },
+      }),
+      this.prisma.loginChallenge.updateMany({
+        where: { userId, consumedAt: null },
+        data: { consumedAt: now },
       }),
     ]);
     return { ok: true, defaultPassword: DEFAULT_RESET_PASSWORD };

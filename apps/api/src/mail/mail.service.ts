@@ -25,7 +25,7 @@ export class MailService {
     });
   }
 
-  async recent(limit = 50) {
+  async recent(limit = 50, withBody = false) {
     return this.prisma.emailOutbox.findMany({
       orderBy: { createdAt: 'desc' },
       take: limit,
@@ -39,6 +39,7 @@ export class MailService {
         lastError: true,
         createdAt: true,
         sentAt: true,
+        ...(withBody ? { bodyText: true } : {}),
       },
     });
   }
