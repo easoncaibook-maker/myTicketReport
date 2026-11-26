@@ -4,7 +4,7 @@ import { api, CurrentUser, refreshSession, setToken } from './api';
 interface AuthContextValue {
   user: CurrentUser | null;
   loading: boolean;
-  login: (email: string, password: string) => Promise<CurrentUser>;
+  completeLogin: (accessToken: string, user: CurrentUser) => void;
   logout: () => Promise<void>;
   setUser: (user: CurrentUser | null) => void;
   reload: () => Promise<void>;
@@ -29,11 +29,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  const login = useCallback(async (email: string, password: string) => {
-    const result = await api.post('/auth/login', { email, password });
-    setToken(result.accessToken);
-    setUser(result.user);
-    return result.user as CurrentUser;
+  const completeLogin = useCallback((accessToken: string, nextUser: CurrentUser) => {
+    setToken(accessToken);
+    setUser(nextUser);
   }, []);
 
   const logout = useCallback(async () => {
@@ -56,7 +54,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout, setUser, reload }}>
+    <AuthContext.Provider value={{ user, loading, completeLogin, logout, setUser, reload }}>
       {children}
     </AuthContext.Provider>
   );

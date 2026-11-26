@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Param, Patch, Post, Put, Query } from '@nestjs/common';
-import { ROLES } from '@ticketreport/shared';
+import { LOGIN_VERIFICATION_MODES, ROLES } from '@ticketreport/shared';
 import { z } from 'zod';
 import { AuthUser, CurrentUser, Roles } from '../common/decorators';
 import { ZodPipe } from '../common/zod.pipe';
@@ -55,6 +55,9 @@ const settingsSchema = z.object({
   reopenWindowDays: z.number().int().min(1).max(90).optional(),
   maxAttachmentMb: z.number().int().min(1).max(200).optional(),
   emailEnabled: z.boolean().optional(),
+  loginVerificationMode: z.enum(LOGIN_VERIFICATION_MODES).optional(),
+  trustedDeviceDays: z.number().int().min(1).max(30).optional(),
+  requireTotpForOps: z.boolean().optional(),
 });
 
 @Roles('ADMIN')
@@ -109,6 +112,12 @@ export class AdminController {
   @Post('users/:id/reset-password')
   resetPassword(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.service.resetUserPassword(user.id, id);
+  }
+
+  /** 解绑 TOTP：清空密钥与恢复码，用户下次登录重新绑定 */
+  @Post('users/:id/reset-totp')
+  resetTotp(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.service.resetUserTotp(user.id, id);
   }
 
   @Patch('users/:id')
@@ -186,7 +195,8 @@ export class AdminController {
 
   @Get('dev/outbox')
   outbox() {
-    return this.mail.recent(50);
+    // 未配置 SMTP 时附上正文，便于内测环境（如邮件验证码）直接查看
+    return this.mail.recent(50, !this.settings.smtpConfigured());
   }
 }
 

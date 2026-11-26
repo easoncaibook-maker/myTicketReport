@@ -1,6 +1,7 @@
 export type EmailTemplateName =
   | 'invite'
   | 'resetPassword'
+  | 'loginCode'
   | 'ticketCreated'
   | 'ticketAssigned'
   | 'ticketComment'
@@ -67,6 +68,22 @@ export function renderEmail(template: EmailTemplateName, data: Record<string, an
           '重置密码',
         ),
         text: `${data.name}，您好：请访问 ${link} 重置密码（2 小时内有效）。`,
+      };
+    case 'loginCode':
+      return {
+        subject: '【运维工单系统】登录验证码',
+        html: layout(
+          '登录验证码',
+          [
+            `${escapeHtml(data.name)}，您好：`,
+            `您正在登录运维工单系统，本次验证码为：`,
+            `<span style="display:inline-block;padding:10px 20px;background:#f2f4f8;border-radius:6px;font-size:26px;letter-spacing:6px;font-weight:600;color:#1668dc">${escapeHtml(
+              data.code,
+            )}</span>`,
+            `验证码 ${escapeHtml(data.minutes ?? 10)} 分钟内有效，请勿转发给他人。如非本人操作，请及时修改密码。`,
+          ],
+        ),
+        text: `您正在登录运维工单系统，验证码：${data.code}（${data.minutes ?? 10} 分钟内有效）。`,
       };
     case 'ticketCreated':
       return {

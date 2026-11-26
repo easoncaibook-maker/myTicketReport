@@ -1,8 +1,13 @@
 import React, { useEffect, useState } from 'react';
-import { Alert, Button, Card, Form, Input, InputNumber, Switch, Table, Tag, message } from 'antd';
+import { Alert, Button, Card, Form, Input, InputNumber, Select, Switch, Table, Tag, message } from 'antd';
 import { ReloadOutlined } from '@ant-design/icons';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { formatDate } from '@ticketreport/shared';
+import {
+  LOGIN_VERIFICATION_DESCRIPTIONS,
+  LOGIN_VERIFICATION_LABELS,
+  LOGIN_VERIFICATION_MODES,
+  formatDate,
+} from '@ticketreport/shared';
 import { api, errorMessage } from '../../lib/api';
 
 const OUTBOX_COLORS: Record<string, string> = {
@@ -14,8 +19,10 @@ const OUTBOX_COLORS: Record<string, string> = {
 
 export default function SettingsPage() {
   const queryClient = useQueryClient();
-  const [form] = Form.useForm();
-  const [saving, setSaving] = useState(false);
+  const [basicForm] = Form.useForm();
+  const [loginForm] = Form.useForm();
+  const [saving, setSaving] = useState<'basic' | 'login' | null>(null);
+  const verificationMode = Form.useWatch('loginVerificationMode', loginForm);
 
   const { data, isLoading } = useQuery({
     queryKey: ['admin-settings'],
@@ -28,28 +35,33 @@ export default function SettingsPage() {
   });
 
   useEffect(() => {
-    if (data) {
-      form.setFieldsValue({
-        siteName: data.siteName,
-        reopenWindowDays: data.reopenWindowDays,
-        maxAttachmentMb: data.maxAttachmentMb,
-        emailEnabled: data.emailEnabled,
-      });
-    }
-  }, [data, form]);
+    if (!data) return;
+    basicForm.setFieldsValue({
+      siteName: data.siteName,
+      reopenWindowDays: data.reopenWindowDays,
+      maxAttachmentMb: data.maxAttachmentMb,
+      emailEnabled: data.emailEnabled,
+    });
+    loginForm.setFieldsValue({
+      loginVerificationMode: data.loginVerificationMode ?? 'SLIDER',
+      trustedDeviceDays: data.trustedDeviceDays ?? 7,
+      requireTotpForOps: data.requireTotpForOps ?? false,
+    });
+  }, [data, basicForm, loginForm]);
 
-  const save = async () => {
+  const save = async (section: 'basic' | 'login') => {
     try {
+      const form = section === 'basic' ? basicForm : loginForm;
       const values = await form.validateFields();
-      setSaving(true);
+      setSaving(section);
       await api.patch('/admin/settings', values);
-      message.success('设置已保存');
+      message.success('设置已保存，立即生效');
       queryClient.invalidateQueries({ queryKey: ['admin-settings'] });
     } catch (e: any) {
       if (e?.errorFields) return;
       message.error(errorMessage(e));
     } finally {
-      setSaving(false);
+      setSaving(null);
     }
   };
 
@@ -58,7 +70,7 @@ export default function SettingsPage() {
       <h2 className="page-title">系统设置</h2>
 
       <Card title="基础参数" loading={isLoading} style={{ marginBottom: 16, maxWidth: 720 }}>
-        <Form form={form} layout="vertical" requiredMark={false}>
+        <Form form={basicForm} layout="vertical" requiredMark={false}>
           <Form.Item name="siteName" label="站点名称" rules={[{ required: true, message: '请输入站点名称' }]}>
             <Input maxLength={50} />
           </Form.Item>
@@ -90,7 +102,58 @@ export default function SettingsPage() {
                 : 'SMTP 未配置：邮件仅写入本地 outbox，不会真实发送。请通过环境变量 SMTP_* 配置。'
             }
           />
-          <Button type="primary" loading={saving} onClick={save}>
+          <Button type="primary" loading={saving === 'basic'} onClick={() => save('basic')}>
+            保存设置
+          </Button>
+        </Form>
+      </Card>
+
+      <Card title="登录验证" loading={isLoading} style={{ marginBottom: 16, maxWidth: 720 }}>
+        <Form form={loginForm} layout="vertical" requiredMark={false}>
+          <Alert
+            type="info"
+            showIcon
+            style={{ marginBottom: 16 }}
+            message="登录验证方式切换后立即生效，并记录审计日志；密码错误限流、强制改密流程不受影响。"
+          />
+          <Form.Item
+            name="loginVerificationMode"
+            label="登录验证方式"
+            rules={[{ required: true, message: '请选择登录验证方式' }]}
+            extra={verificationMode ? LOGIN_VERIFICATION_DESCRIPTIONS[verificationMode] : undefined}
+          >
+            <Select
+              options={LOGIN_VERIFICATION_MODES.map((mode) => ({
+                value: mode,
+                label: LOGIN_VERIFICATION_LABELS[mode],
+              }))}
+            />
+          </Form.Item>
+          {verificationMode === 'EMAIL_CODE' && !data?.smtpConfigured && (
+            <Alert
+              type="warning"
+              showIcon
+              style={{ marginBottom: 16 }}
+              message="SMTP 未配置：验证码会写入本地发件箱，登录页也会直接显示（仅适合内测）。生产环境请先配置 SMTP_*。"
+            />
+          )}
+          <Form.Item
+            name="trustedDeviceDays"
+            label="信任设备免验证天数"
+            extra="邮件验证码通过并勾选「信任此设备」后，在该天数内免验证；个人设置中可查看与撤销"
+            rules={[{ required: true, message: '请输入免验证天数' }]}
+          >
+            <InputNumber min={1} max={30} style={{ width: 160 }} />
+          </Form.Item>
+          <Form.Item
+            name="requireTotpForOps"
+            label="强制运维账号绑定 TOTP"
+            valuePropName="checked"
+            extra="仅在「Google 验证器（TOTP）」模式下生效：未绑定的运维账号登录时必须先完成绑定"
+          >
+            <Switch />
+          </Form.Item>
+          <Button type="primary" loading={saving === 'login'} onClick={() => save('login')}>
             保存设置
           </Button>
         </Form>
