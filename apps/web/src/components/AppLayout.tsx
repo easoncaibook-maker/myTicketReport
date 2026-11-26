@@ -1,6 +1,6 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { Avatar, Badge, Dropdown, Layout, Menu, Space, Tag, Typography } from 'antd';
+import { Avatar, Badge, Drawer, Dropdown, FloatButton, Layout, Menu, Space, Tag, Typography } from 'antd';
 import {
   AuditOutlined,
   BarChartOutlined,
@@ -8,6 +8,7 @@ import {
   FileTextOutlined,
   LogoutOutlined,
   PlusOutlined,
+  RobotOutlined,
   SettingOutlined,
   TeamOutlined,
   UserOutlined,
@@ -16,6 +17,7 @@ import { useQuery } from '@tanstack/react-query';
 import { ROLE_LABELS } from '@ticketreport/shared';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
+import AiChatPanel from './AiChatPanel';
 
 const { Header, Sider, Content } = Layout;
 
@@ -23,6 +25,7 @@ export default function AppLayout() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+  const [chatOpen, setChatOpen] = useState(false);
 
   const { data: unread } = useQuery({
     queryKey: ['unread-count'],
@@ -37,6 +40,7 @@ export default function AppLayout() {
     ];
     items.push({ key: '/tickets/new', icon: <PlusOutlined />, label: '提交工单' });
     items.push({ key: '/notifications', icon: <BellOutlined />, label: '消息中心' });
+    items.push({ key: '/ai-chat', icon: <RobotOutlined />, label: 'AI 助手' });
     items.push({ key: '/reports', icon: <BarChartOutlined />, label: '统计报表' });
     if (user?.role === 'ADMIN') {
       items.push({
@@ -48,6 +52,7 @@ export default function AppLayout() {
           { key: '/admin/users', icon: <UserOutlined />, label: '账号管理' },
           { key: '/admin/categories', icon: <SettingOutlined />, label: '分类与处理组' },
           { key: '/admin/settings', icon: <SettingOutlined />, label: '系统设置' },
+          { key: '/admin/ai', icon: <RobotOutlined />, label: 'AI 问答' },
           { key: '/admin/audit', icon: <AuditOutlined />, label: '审计日志' },
         ],
       });
@@ -81,7 +86,8 @@ export default function AppLayout() {
   };
 
   return (
-    <Layout style={{ minHeight: '100vh' }}>
+    <>
+      <Layout style={{ minHeight: '100vh' }}>
       <Sider width={216} theme="dark" breakpoint="lg" collapsedWidth={0}>
         <div className="layout-logo">
           <FileTextOutlined style={{ fontSize: 20 }} />
@@ -124,6 +130,36 @@ export default function AppLayout() {
           <Outlet />
         </Content>
       </Layout>
-    </Layout>
+      </Layout>
+      <FloatButton
+        icon={<RobotOutlined />}
+        type="primary"
+        tooltip="AI 助手"
+        style={{ right: 28, bottom: 96 }}
+        onClick={() => setChatOpen(true)}
+      />
+      <Drawer
+        title="AI 助手"
+        placement="right"
+        width={520}
+        open={chatOpen}
+        onClose={() => setChatOpen(false)}
+        styles={{ body: { padding: 12, display: 'flex', flexDirection: 'column' } }}
+        extra={
+          <Typography.Link
+            onClick={() => {
+              setChatOpen(false);
+              navigate('/ai-chat');
+            }}
+          >
+            打开完整页面
+          </Typography.Link>
+        }
+      >
+        <div style={{ height: '100%' }}>
+          <AiChatPanel compact />
+        </div>
+      </Drawer>
+    </>
   );
 }

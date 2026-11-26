@@ -15,10 +15,12 @@ import TicketDetailPage from './pages/TicketDetailPage';
 import NotificationsPage from './pages/NotificationsPage';
 import ReportsPage from './pages/ReportsPage';
 import ProfilePage from './pages/ProfilePage';
+import AiChatPage from './pages/AiChatPage';
 import EnterprisesPage from './pages/admin/EnterprisesPage';
 import UsersPage from './pages/admin/UsersPage';
 import CategoriesGroupsPage from './pages/admin/CategoriesGroupsPage';
 import SettingsPage from './pages/admin/SettingsPage';
+import AiSettingsPage from './pages/admin/AiSettingsPage';
 import AuditLogsPage from './pages/admin/AuditLogsPage';
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
@@ -74,6 +76,7 @@ export default function App() {
         <Route path="/tickets/new" element={<TicketCreatePage />} />
         <Route path="/tickets/:id" element={<TicketDetailPage />} />
         <Route path="/notifications" element={<NotificationsPage />} />
+        <Route path="/ai-chat" element={<AiChatPage />} />
         <Route path="/reports" element={<ReportsPage />} />
         <Route path="/profile" element={<ProfilePage />} />
         <Route
@@ -105,6 +108,14 @@ export default function App() {
           element={
             <RequireRole roles={['ADMIN']}>
               <SettingsPage />
+            </RequireRole>
+          }
+        />
+        <Route
+          path="/admin/ai"
+          element={
+            <RequireRole roles={['ADMIN']}>
+              <AiSettingsPage />
             </RequireRole>
           }
         />

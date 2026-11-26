@@ -328,7 +328,7 @@ const enterpriseCol = ticketInfo.find((c) => c.name === 'enterpriseId');
 const needUser = ['mustChangePassword', 'passwordChangedAt', 'tokenVersion', 'totpSecret', 'totpEnabledAt', 'totpRecoveryCodes', 'totpLastStep'].filter((c) => !userCols.includes(c));
 const needTicketCols = ['ticketType', 'onBehalf', 'closeSource', 'workHours'].filter((c) => !ticketCols.includes(c));
 const needRebuild = ticketCols.length > 0 && (needTicketCols.length > 0 || (enterpriseCol && enterpriseCol.notnull === 1));
-const needTables = !hasTable('TicketFavorite') || !hasTable('TicketRelation') || !hasTable('LoginChallenge') || !hasTable('TrustedDevice');
+const needTables = !hasTable('TicketFavorite') || !hasTable('TicketRelation') || !hasTable('LoginChallenge') || !hasTable('TrustedDevice') || !hasTable('AiConversation') || !hasTable('AiMessage') || !hasTable('FaqEntry');
 
 if (!needUser.length && !needRebuild && !needTables) {
   console.log('[migrate] 数据库结构已是最新');
@@ -486,6 +486,56 @@ if (!hasTable('TrustedDevice')) {
   db.exec('CREATE UNIQUE INDEX "TrustedDevice_tokenHash_key" ON "TrustedDevice"("tokenHash")');
   db.exec('CREATE INDEX "TrustedDevice_userId_expiresAt_idx" ON "TrustedDevice"("userId", "expiresAt")');
   console.log('[migrate] 已创建 TrustedDevice 表');
+}
+
+if (!hasTable('AiConversation')) {
+  db.exec('CREATE TABLE "AiConversation" (' +
+    '"id" TEXT NOT NULL PRIMARY KEY, ' +
+    '"userId" TEXT NOT NULL, ' +
+    '"enterpriseId" TEXT, ' +
+    '"title" TEXT NOT NULL DEFAULT \'新对话\', ' +
+    '"messageCount" INTEGER NOT NULL DEFAULT 0, ' +
+    '"lastMessageAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, ' +
+    '"createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, ' +
+    '"updatedAt" DATETIME NOT NULL, ' +
+    'CONSTRAINT "AiConversation_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE' +
+    ')');
+  db.exec('CREATE INDEX "AiConversation_userId_updatedAt_idx" ON "AiConversation"("userId", "updatedAt")');
+  db.exec('CREATE INDEX "AiConversation_enterpriseId_idx" ON "AiConversation"("enterpriseId")');
+  console.log('[migrate] 已创建 AiConversation 表');
+}
+
+if (!hasTable('AiMessage')) {
+  db.exec('CREATE TABLE "AiMessage" (' +
+    '"id" TEXT NOT NULL PRIMARY KEY, ' +
+    '"conversationId" TEXT NOT NULL, ' +
+    '"role" TEXT NOT NULL, ' +
+    '"content" TEXT NOT NULL, ' +
+    '"citations" TEXT, ' +
+    '"meta" TEXT, ' +
+    '"createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, ' +
+    'CONSTRAINT "AiMessage_conversationId_fkey" FOREIGN KEY ("conversationId") REFERENCES "AiConversation" ("id") ON DELETE CASCADE ON UPDATE CASCADE' +
+    ')');
+  db.exec('CREATE INDEX "AiMessage_conversationId_createdAt_idx" ON "AiMessage"("conversationId", "createdAt")');
+  console.log('[migrate] 已创建 AiMessage 表');
+}
+
+if (!hasTable('FaqEntry')) {
+  db.exec('CREATE TABLE "FaqEntry" (' +
+    '"id" TEXT NOT NULL PRIMARY KEY, ' +
+    '"enterpriseId" TEXT, ' +
+    '"question" TEXT NOT NULL, ' +
+    '"answer" TEXT NOT NULL, ' +
+    '"keywords" TEXT, ' +
+    '"visibility" TEXT NOT NULL DEFAULT \'PUBLIC\', ' +
+    '"status" TEXT NOT NULL DEFAULT \'ACTIVE\', ' +
+    '"createdBy" TEXT, ' +
+    '"createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, ' +
+    '"updatedAt" DATETIME NOT NULL' +
+    ')');
+  db.exec('CREATE INDEX "FaqEntry_status_visibility_idx" ON "FaqEntry"("status", "visibility")');
+  db.exec('CREATE INDEX "FaqEntry_enterpriseId_idx" ON "FaqEntry"("enterpriseId")');
+  console.log('[migrate] 已创建 FaqEntry 表');
 }
 
 const check = db.prepare('PRAGMA integrity_check').get();

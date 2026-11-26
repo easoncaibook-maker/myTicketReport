@@ -239,6 +239,99 @@ export const LOGIN_VERIFICATION_DESCRIPTIONS: Record<LoginVerificationMode, stri
 
 export const ACTOR_ROLE_LABELS: Record<string, string> = ROLE_LABELS;
 
+/** AI 问答知识库来源 */
+export const AI_KB_SOURCES = ['FAQ', 'EXTERNAL_HTTP', 'INTERNAL'] as const;
+export type AiKbSource = (typeof AI_KB_SOURCES)[number];
+
+export const AI_KB_SOURCE_LABELS: Record<AiKbSource, string> = {
+  FAQ: '内置 FAQ（关键词检索）',
+  EXTERNAL_HTTP: '外部知识库（HTTP 检索）',
+  INTERNAL: '内部知识库（预留占位）',
+};
+
+export const AI_KB_SOURCE_DESCRIPTIONS: Record<AiKbSource, string> = {
+  FAQ: '后台录入的问答条目，按关键词打分排序，无需外部服务即可使用',
+  EXTERNAL_HTTP: '调用外部知识库检索接口，通过字段映射转换为统一引用格式',
+  INTERNAL: '预留给内部知识库接入的同一契约空实现，当前不返回任何内容',
+};
+
+/** FAQ 可见范围：PUBLIC 所有登录用户；INTERNAL 仅运维账号 */
+export const FAQ_VISIBILITIES = ['PUBLIC', 'INTERNAL'] as const;
+export type FaqVisibility = (typeof FAQ_VISIBILITIES)[number];
+
+export const FAQ_VISIBILITY_LABELS: Record<FaqVisibility, string> = {
+  PUBLIC: '公开（所有登录用户）',
+  INTERNAL: '仅运维内部',
+};
+
+export interface AiCitation {
+  /** 回答中的引用序号，对应 [1][2]… */
+  index: number;
+  source: 'FAQ' | 'EXTERNAL_HTTP' | 'INTERNAL';
+  id: string;
+  title: string;
+  snippet: string;
+  url?: string | null;
+}
+
+export interface AiChatMessageView {
+  id: string;
+  role: 'USER' | 'ASSISTANT';
+  content: string;
+  citations: AiCitation[];
+  createdAt: string;
+  meta?: Record<string, any> | null;
+}
+
+export interface AiConversationView {
+  id: string;
+  title: string;
+  messageCount: number;
+  lastMessageAt: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AiStatusView {
+  enabled: boolean;
+  configured: boolean;
+  kbSource: AiKbSource;
+  kbConfigured: boolean;
+  rateLimitPerMinute: number;
+  maxMessageChars: number;
+  suggestedQuestions: string[];
+  notice?: string | null;
+}
+
+/**
+ * 「上报为工单」接口契约（本版本未实现，不会创建工单）。
+ * 设计：对话页在 AI 回答下提供「上报为工单」入口，用户确认后由大模型根据会话上下文
+ * 生成工单草稿，用户可编辑后再调用现有 POST /tickets 创建，AI 侧不直接落库。
+ */
+export const AI_TICKET_DRAFT_CONTRACT = {
+  implemented: false,
+  endpoint: 'POST /api/ai/ticket-draft',
+  request: {
+    conversationId: 'string（必填，当前会话）',
+    messageId: 'string（可选，指定作为草稿依据的 AI 回答）',
+    hint: 'string（可选，用户补充说明，最多 500 字）',
+  },
+  response: {
+    implemented: false,
+    draft: {
+      title: 'string（工单标题，≤ 80 字）',
+      description: 'string（问题描述，纯文本，≤ 2000 字）',
+      categoryId: 'string（从 /api/meta/categories 中选择）',
+      priority: 'P1 | P2 | P3 | P4',
+    },
+    requiresUserConfirm: true,
+  },
+  notes: [
+    '本版本仅提供入口与交互设计，接口返回 501 NOT_IMPLEMENTED，不创建工单',
+    '后续实现时复用 POST /api/tickets 的校验与权限，草稿只做预填不直接落库',
+  ],
+} as const;
+
 export interface Paged<T> {
   items: T[];
   total: number;

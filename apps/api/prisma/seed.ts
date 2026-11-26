@@ -48,6 +48,38 @@ async function main() {
     ],
   });
 
+  // AI 助手内置 FAQ 兜底知识库（公开，所有客户可见）
+  await prisma.faqEntry.createMany({
+    data: [
+      {
+        question: '如何提交一个新的工单？',
+        answer:
+          '登录后点击左侧「提交工单」，选择问题分类、填写标题与详细描述，如有报错截图可作为附件上传，提交后系统会按分类自动分配到对应处理组。',
+        keywords: '提交,提单,新建工单,怎么提',
+        visibility: 'PUBLIC',
+      },
+      {
+        question: '工单多久会有人处理？',
+        answer:
+          '工单提交后会进入对应处理组队列，紧急问题（P1）会优先响应。处理进展可在工单详情页查看，状态变化也会在消息中心通知。',
+        keywords: '响应,多久,处理时间,时限',
+        visibility: 'PUBLIC',
+      },
+      {
+        question: '忘记密码怎么办？',
+        answer: '在登录页点击「忘记密码」，通过邮箱重置链接设置新密码；若邮箱不可用，请联系管理员在账号管理中重置密码。',
+        keywords: '忘记密码,重置密码,改密码',
+        visibility: 'PUBLIC',
+      },
+      {
+        question: '工单关闭后还能重新打开吗？',
+        answer: '可以。工单关闭后在系统设置的重开时限内（默认 7 天），提报人可在工单详情页点击「重开工单」；超过时限请新建工单。',
+        keywords: '重开,关闭,重新打开',
+        visibility: 'PUBLIC',
+      },
+    ],
+  });
+
   if (!withDemo) {
     console.log('基础初始数据已生成（未写入演示数据）：');
     console.log('  管理员: admin@example.com / ' + (process.env.INITIAL_ADMIN_PASSWORD || 'Admin123!'));

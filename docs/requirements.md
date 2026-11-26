@@ -774,3 +774,64 @@ erDiagram
 | `ticket_relation` | 新表：`id`、`ticket_id`、`related_ticket_id`、`created_by_id`、`created_at`，`(ticket_id,related_ticket_id)` 唯一 | 新建表，无历史数据迁移 |
 
 升级流程：容器启动时由 entrypoint 执行 `prisma db push`（增量、无损），本地执行 `npm run db:generate && npm run db:push`。本次变更不含字段重命名 / 删除，已有 SQLite / PostgreSQL 库可直接平滑升级。
+
+---
+
+## 13. AI 问答助手（v0.3 增补）
+
+### 13.1 用户对话
+
+- **FR-AI-01** 登录用户可从左侧「AI 助手」进入完整对话页，或点击右下角悬浮入口在抽屉内提问；支持多轮对话与历史会话列表。
+- **FR-AI-02** 回答基于知识库检索结果，并展示引用来源（序号、标题、片段，外部条目可跳转原文）。
+- **FR-AI-03** 对话按用户保存、按企业隔离；不得跨用户 / 跨企业读取或删除。
+- **FR-AI-04** 未启用或未配置大模型时给出友好提示，不返回报错；历史对话仍可查看。
+
+### 13.2 大模型接入
+
+- **FR-AI-05** 采用 OpenAI 兼容协议，后台可配置 Base URL、API Key、模型名、温度、超时、最大输出、TopK。
+- **FR-AI-06** API Key 使用 AES-256-GCM 加密存储，读取接口只返回是否已配置，前端不回显明文。
+- **FR-AI-07** 接口限流：每用户每分钟可配置次数，超限返回 429。
+
+### 13.3 知识库适配器
+
+- **FR-AI-08** 统一契约 `KnowledgeSource.search(query, scope, topK) → 命中列表`。
+- **FR-AI-09** 外部 HTTP 知识库：可配置 endpoint、Key、超时、鉴权头、请求模板、响应字段映射。
+- **FR-AI-10** 内部知识库预留同一契约的空实现，后续接入不改业务代码。
+- **FR-AI-11** 内置 FAQ：后台录入 / 批量导入问答文本，关键词打分检索；外部知识库异常或无结果时兜底。
+
+### 13.4 权限与隔离
+
+- **FR-AI-12** 客户只检索公开知识，且只能看到全局或本企业条目；运维可检索内部知识，同样不可跨企业。
+- **FR-AI-13** 会话读取 / 删除二次校验 userId + enterpriseId，越权一律返回 404。
+
+### 13.5 安全防护
+
+- **FR-AI-14** 知识片段视为不可信数据，提示词明确禁止执行其中指令；清洗 HTML 标签与常见提示注入语句。
+- **FR-AI-15** 上下文限制：单条问题字数、携带历史条数与字符数、知识片段总长度均有上限。
+
+### 13.6 上报为工单（仅设计）
+
+- **FR-AI-16** 对话内提供入口与交互说明；`POST /api/ai/ticket-draft` 返回 501 与接口契约，不创建工单。
+- **FR-AI-17** 契约包含标题、描述、分类、优先级；后续复用现有提单接口，草稿不直接落库。
+
+### 13.7 验收补充
+
+- [ ] AC-AI-01 未配置时对话返回友好提示（HTTP 200），不抛错。
+- [ ] AC-AI-02 配置 mock OpenAI 后回答包含 `[1]` 引用，且 citations 非空。
+- [ ] AC-AI-03 外部知识库返回其他企业 / 内部条目时，客户结果被过滤。
+- [ ] AC-AI-04 外部知识库无结果时回退 FAQ，并标注实际来源。
+- [ ] AC-AI-05 客户 A 无法读取客户 B 的会话（404）。
+- [ ] AC-AI-06 超过限流阈值返回 429；超长问题返回 400。
+- [ ] AC-AI-07 工单草稿接口返回 501，且不产生工单。
+- [ ] AC-AI-08 配置与 FAQ 变更产生审计日志，且不包含密钥明文。
+
+### 13.8 数据模型增量与平滑升级
+
+| 变更 | 说明 | 升级方式 |
+| --- | --- | --- |
+| `AiConversation` | 会话：`userId`、`enterpriseId` 快照、`title`、`messageCount`、`lastMessageAt` | 新建表 |
+| `AiMessage` | 消息：`conversationId`、`role`、`content`、`citations`(JSON)、`meta`(JSON) | 新建表，级联删除 |
+| `FaqEntry` | FAQ：`question`、`answer`、`keywords`、`visibility`、`status`、`enterpriseId`、`createdBy` | 新建表 |
+| `AppSetting` | 新增 `ai*` / `kb*` 配置键；API Key 以 `v1:iv:tag:cipher` 密文保存 | 仅写入配置键 |
+
+升级流程：Windows 安装包启动时由 `migrate.cjs` 幂等建表并备份；源码环境执行 `npm run db:generate && npm run db:push`。本次无字段重命名或删除，SQLite / PostgreSQL 均可平滑升级。

@@ -621,3 +621,49 @@ INITIAL_ADMIN_PASSWORD=ChangeMe123!
 1. Q1 已确认选 B：待受理阶段支持提报人撤回，新增「已取消」状态并作废；文档已同步（FR-TICKET-08、T12、权限矩阵、AC-FLOW-09/10、报表口径）。
 2. Q2–Q8 及权限矩阵两处管理习惯假设全部按文档默认方案执行。
 3. 按 M0 → M5 顺序开发，每完成一个里程碑提交演示与自测结果。
+
+---
+
+## 11. AI 问答助手实现（v0.3）
+
+### 11.1 模块结构
+
+- 后端 `apps/api/src/ai/`：
+  - `ai.controller.ts`：对话、会话、状态、工单草稿契约；
+  - `admin-ai.controller.ts`：大模型 / 知识库配置、FAQ 管理（仅管理员）；
+  - `chat.service.ts`：会话隔离、检索增强、上下文裁剪、引用抽取、落库；
+  - `ai-settings.service.ts`：配置读写与密钥加解密；`llm.service.ts`：OpenAI 兼容调用；
+  - 知识库适配器：`knowledge.service.ts` + `faq.source.ts` / `external-http.source.ts` / `internal.source.ts`，统一 `KnowledgeSource` 契约；
+  - 安全：`prompt.ts`（清洗、注入防护、上下文限制、引用解析）、`rate-limit.service.ts`、`common/secret-box.ts`。
+- 前端：`AiChatPanel`（独立页与悬浮抽屉复用）、`AiChatPage`、`admin/AiSettingsPage`；布局增加菜单项与悬浮入口。
+
+### 11.2 关键接口
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/api/ai/status` | 是否启用 / 已配置、知识来源、限流、建议问题 |
+| GET | `/api/ai/conversations` | 我的会话（按企业隔离） |
+| POST | `/api/ai/conversations` | 新建会话 |
+| GET | `/api/ai/conversations/:id` | 会话详情与消息 |
+| PATCH | `/api/ai/conversations/:id` | 重命名 |
+| DELETE | `/api/ai/conversations/:id` | 删除会话与消息 |
+| POST | `/api/ai/chat` | 多轮对话：限流 → 检索 → 生成 → 引用 → 落库 |
+| POST | `/api/ai/ticket-draft` | 返回 501 与工单草稿契约（不创建工单） |
+| GET/PATCH | `/api/admin/ai/settings` | AI 配置读取 / 保存（密钥只写不读） |
+| GET/POST/PATCH/DELETE | `/api/admin/faq` | FAQ 查询、新建、修改、删除 |
+| POST | `/api/admin/faq/import` | 问答文本批量导入（Q/A，空行分隔） |
+
+### 11.3 关键决策
+
+- **密钥加密**：AES-256-GCM，密钥派生顺序 `AI_SECRET_KEY` → `JWT_ACCESS_SECRET` → 本地默认；密文损坏按未配置处理。
+- **权限双保险**：适配器内部先按企业 / 可见性过滤，`KnowledgeService` 统一出口再次校验，防止外部实现漏过滤。
+- **兜底链**：外部 HTTP 异常或无结果 → 内置 FAQ；内部知识库当前为空实现，遵循同一契约。
+- **限流**：进程内滑动窗口，按用户每分钟计数，在写入消息前执行；多实例部署需替换为共享存储。
+- **提示注入**：知识片段包在 `<knowledge>` 中并声明不可信，清洗标签、代码围栏与常见注入语句，限制总长度。
+- **工单草稿**：本轮只提供 501 契约与前端说明，不调用模型、不落库、不创建工单。
+
+### 11.4 验证结果
+
+- 单元测试：57 项全部通过（新增 AI 提示词 / FAQ 打分与权限 / 外部映射 / 密钥加解密 / 限流共 16 项）。
+- 接口验证：使用 mock OpenAI 兼容服务与 mock 外部知识库，39 项断言全部通过，覆盖未配置提示、检索增强与 `[1]` 引用、外部知识库字段映射、企业 / 可见性过滤、FAQ 兜底、会话隔离、限流 429、超长问题 400、工单草稿 501、配置与 FAQ 审计。
+- 平滑升级：在模拟旧库（移除三张新表）上执行安装包 `migrate.cjs`，三张表创建成功、`integrity_check=ok`；重复执行输出「数据库结构已是最新」。
